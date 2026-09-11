@@ -2,6 +2,8 @@
 
 Первая рабочая версия помощника НРИ на Python 3.12, Django 5.2 и PostgreSQL.
 
+Адрес приложения: https://voinatitii.84.201.155.77.sslip.io
+
 ## Запуск
 
 ```sh
