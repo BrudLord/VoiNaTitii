@@ -106,4 +106,15 @@ def abilities(text):
                 match=re.search(r'(?:эффект |получает |и )'+status+r' (\d+)',description)
                 if match: effects.append({'stat':stat,'value':sign*int(match[1]),'name':status,'key':'status:'+status,'turns':3})
         if effects: data.update(effects=effects,target='single',automation_notes='Числовые эффекты применяются автоматически; остальное — по описанию.')
+        if any(k.startswith('Аура') for k in keywords):
+            data.update(aura=True,category='passive',target='multiple',rolls=False)
+            # Track the owner's chosen recipients even when the special trigger is manual.
+            data['effects']=[{'stat':'status','value':0,'name':clean(m[1]),'duration':'aura'}]
+            direct=re.match(r'(?:Вы и союзники|Союзники|Противники|Цели) в ауре получа(?:ют|ете) ([+-]\d+) к (урону|попаданию)\.',description)
+            if direct:
+                data['effects']=[{'stat':'damage' if direct[2]=='урону' else 'hit','value':int(direct[1]),'name':clean(m[1]),'duration':'aura'}]
+                data['automation_notes']='Базовый бонус действует на выбранных получателей; усиление и особые условия — по описанию.'
+            else:
+                data['automation_notes']='Выбранные получатели видят ауру в листе. Особые последствия и срабатывания — по описанию.'
+
         yield clean(m[1]),description,data,f'Книга, строка {before.count(chr(10))+1}'

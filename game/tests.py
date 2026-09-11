@@ -317,6 +317,10 @@ class GameTests(TestCase):
         rows={name:data for name,desc,data,source in abilities(Path('rules/player-book.txt').read_text())}
         self.assertEqual(rows['Волшебная стрела']['formula'],'1к6+Мод')
         self.assertTrue(rows['Волшебная стрела']['damage'])
+        self.assertTrue(rows['Дух зверя']['aura'])
+        self.assertEqual(rows['Дух зверя']['effects'][0]['value'],1)
+        self.assertEqual(rows['Миазмы']['effects'][0]['value'],-1)
+        self.assertTrue(rows['Аура жизни']['aura'])
 
     def test_audit_three_secondary_schools(self):
         klass=Entry.objects.create(kind='class',name='Стихийный маг',data={'extra_schools':3,'allowed_schools':['Огонь','Вода','Земля','Воздух']})
