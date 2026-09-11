@@ -85,7 +85,7 @@ def abilities(text):
             data['keywords'].append(school)
         ranges=[k for k in keywords if re.search(r'Ближний|Дальнобойный|Вокруг|Линия|Сфера|Конус',k)]
         data['range']=' · '.join(ranges)
-        expressions=re.findall(r'(?:\d+\s*(?:к\d+|Ор)(?:\s*[+−-]\s*(?:\d+\s*\*?\s*)?Мод)?|(?:\d+\s*\*\s*)?Мод)\s*(?=урона)',description)
+        expressions=re.findall(r'(?:\d+\s*(?:к\d+|Ор)(?:\s*[+−-]\s*(?:\d+\s*\*?\s*)?Мод)?|(?:\d+\s*\*\s*)?Мод)\s*(?=(?:[А-Яа-яЁё]+\s+){0,3}урона)',description)
         if expressions:
             data.update(formula=expressions[0].replace(' ','').replace('−','-'),damage=True,
                         weapon='Ор' in expressions[0],formula_variants=list(dict.fromkeys(expressions)))

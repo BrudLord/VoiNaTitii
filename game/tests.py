@@ -311,6 +311,13 @@ class GameTests(TestCase):
         specs=[name for kind,name,_,_ in records(text) if kind=='specialization']
         self.assertIn('Военная история',specs);self.assertIn('Хавнгрим',specs)
 
+    def test_audit_elemental_damage_formula(self):
+        from pathlib import Path
+        from .book_audit import abilities
+        rows={name:data for name,desc,data,source in abilities(Path('rules/player-book.txt').read_text())}
+        self.assertEqual(rows['Волшебная стрела']['formula'],'1к6+Мод')
+        self.assertTrue(rows['Волшебная стрела']['damage'])
+
     def test_audit_three_secondary_schools(self):
         klass=Entry.objects.create(kind='class',name='Стихийный маг',data={'extra_schools':3,'allowed_schools':['Огонь','Вода','Земля','Воздух']})
         schools=[Entry.objects.create(kind='school',name=n) for n in klass.data['allowed_schools']]
