@@ -40,8 +40,8 @@ def owned(user, pk):
 
 def access_campaign(user, pk):
     campaign = get_object_or_404(Campaign, pk=pk)
-    if not master(user) and not campaign.memberships.filter(character__owner=user).exists():
-        raise PermissionDenied('Вступите в кампанию своим персонажем')
+    if not master(user) and not campaign.players.filter(pk=user.pk).exists() and not campaign.memberships.filter(character__owner=user).exists():
+        raise PermissionDenied('Вступите в кампанию')
     return campaign
 
 
@@ -117,10 +117,11 @@ def state(request):
     campaigns = []
     accessible = set()
     for c in Campaign.objects.all():
-        member = master(request.user) or c.memberships.filter(character__owner=request.user).exists()
+        member = master(request.user) or c.players.filter(pk=request.user.pk).exists() or c.memberships.filter(character__owner=request.user).exists()
         if member:
             accessible.add(c.id)
         campaigns.append({'id': c.id, 'name': c.name, 'description': c.description, 'member': member,
+                          'players': list(c.players.values('id', 'username')) if member else [],
                           'notes': c.notes if member else None, 'note_revision': c.note_revision if member else None,
                           'squads': list(c.squads.values('id', 'name')),
                           'items': list(c.items.values('id', 'name', 'quantity', 'data')) if member else []})
@@ -191,6 +192,10 @@ def execute(user, p):
         if not isinstance(ids, list):
             raise ValueError('Некорректный список умений')
         c.abilities.set(Entry.objects.filter(id__in=ids, kind='ability', archived=False))
+        if creating and p.get('campaign'):
+            campaign = access_campaign(user, p['campaign'])
+            campaign.players.add(c.owner)
+            Membership.objects.create(character=c, campaign=campaign)
         if creating:
             c.runtime['hp'] = computed(c)['max_hp']
             c.save(update_fields=['runtime'])
@@ -204,12 +209,17 @@ def execute(user, p):
         c.private_notes = c.private_notes[:50000]
         c.save(update_fields=['private_notes'])
         return {'text': c.private_notes}
+    if op == 'campaign.join':
+        campaign = get_object_or_404(Campaign, pk=p['campaign'])
+        campaign.players.add(user)
+        return {'id': campaign.id}
     if op == 'campaign.create':
         require_master(user)
         name = str(p.get('name', '')).strip()[:120]
         if not name:
             raise ValueError('Укажите название')
         c = Campaign.objects.create(name=name, description=str(p.get('description', ''))[:5000])
+        c.players.add(user)
         Squad.objects.create(campaign=c, name='Основной отряд')
         return {'id': c.id}
     if op == 'squad.create':
@@ -227,6 +237,7 @@ def execute(user, p):
         else:
             squad = get_object_or_404(Squad, pk=p['squad'], campaign=campaign) if p.get('squad') else None
             Membership.objects.update_or_create(character=c, campaign=campaign, defaults={'squad': squad})
+            campaign.players.add(c.owner)
     elif op == 'notes.shared':
         c = access_campaign(user, p['campaign'])
         text = str(p.get('text', ''))[:50000]

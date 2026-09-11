@@ -38,6 +38,7 @@ class Character(models.Model):
 
 
 class Campaign(models.Model):
+    players = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='campaigns')
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True)
     notes = models.TextField(blank=True)
