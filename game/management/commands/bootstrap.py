@@ -110,4 +110,6 @@ class Command(BaseCommand):
                 data['crit'] = 1 if 'Крит 1' in special else 0
             else: continue
             add('item', name, f'{kind}. {special} Стоимость: {price}', data)
+        from django.core.management import call_command
+        call_command('structure_catalog')
         self.stdout.write(f'Справочник: {Entry.objects.count()} записей. Мастер готов.')
