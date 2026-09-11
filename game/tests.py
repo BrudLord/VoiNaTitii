@@ -195,3 +195,27 @@ class GameTests(TestCase):
         self.post(newcomer, {'op': 'membership', 'character': character.id, 'campaign': self.campaign.id, 'leave': True})
         self.assertTrue(self.campaign.players.filter(pk=newcomer.pk).exists())
         self.post(newcomer, {'op': 'hp', 'character': self.a.id, 'mode': 'heal', 'value': 1}, 403)
+
+    def test_book_choices_and_character_dependencies(self):
+        from django.conf import settings
+        from .book_choices import book_choices
+        choices = book_choices((settings.BASE_DIR / 'rules/player-book.txt').read_text())
+        self.assertEqual(sum(kind == 'class' for kind, _ in choices), 41)
+        self.assertEqual(sum(kind == 'race' for kind, _ in choices), 10)
+        self.assertEqual(choices['class', 'Мистический лучник']['allowed_schools'], ['Луки', 'Холод', 'Воздух'])
+        self.assertEqual(len(choices['class', 'Элементалист']['allowed_schools']), 10)
+        self.assertIn('Орки гор', choices['race', 'Орк']['subraces'])
+        race = Entry.objects.create(kind='race', name='Орк', data=choices['race', 'Орк'])
+        klass = Entry.objects.create(kind='class', name='Паладин Света', data=choices['class', 'Паладин Света'])
+        shield = Entry.objects.create(kind='school', name='Щиты')
+        fire = Entry.objects.create(kind='school', name='Огонь')
+        data = {'op': 'character.save', 'name': 'Паладин', 'info': {'race_id': race.id, 'subrace': 'Орки гор',
+                'class_id': klass.id, 'school_id': self.school.id, 'secondary_school_id': shield.id}}
+        result = self.post(self.alice, data)
+        self.assertEqual(Character.objects.get(pk=result['id']).info['subrace'], 'Орки гор')
+        self.post(self.alice, {**data, 'info': {**data['info'], 'subrace': 'Вампиры'}}, 400)
+        self.post(self.alice, {**data, 'info': {**data['info'], 'school_id': fire.id}}, 400)
+        self.post(self.alice, {**data, 'info': {**data['info'], 'secondary_school_id': self.school.id}}, 400)
+        # A legacy sheet with a school but no class can still save unrelated edits.
+        self.post(self.alice, {'op': 'character.save', 'id': self.a.id, 'revision': self.a.revision,
+                             'name': 'Старый лист', 'info': self.a.info})

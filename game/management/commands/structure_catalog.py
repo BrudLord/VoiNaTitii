@@ -4,6 +4,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from game.models import Clock, Entry
+from game.book_choices import book_choices
 
 
 class Command(BaseCommand):
@@ -13,6 +14,13 @@ class Command(BaseCommand):
     def handle(self, **options):
         clock, _ = Clock.objects.select_for_update().get_or_create(pk=1)
         text = (settings.BASE_DIR / 'rules/player-book.txt').read_text()
+        for (kind, name), choices in book_choices(text).items():
+            entry = Entry.objects.filter(kind=kind, name=name).first()
+            if entry:
+                data = {**choices, **entry.data}  # Preserve master edits to these choices.
+                if data != entry.data:
+                    entry.data = data
+                    entry.save(update_fields=['data'])
         contexts = {}
         chapter, source = 0, ''
         for number, line in enumerate(text.splitlines(), 1):

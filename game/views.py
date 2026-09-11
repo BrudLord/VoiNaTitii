@@ -179,12 +179,28 @@ def execute(user, p):
         c.stats = {k: bounded(p.get('stats', {}).get(k, 10), -1000, 1000) for k, _ in STATS}
         allowed = ['race_id', 'class_id', 'school_id', 'secondary_school_id', 'subrace', 'craft',
                    'background', 'alignment', 'specializations', 'skills']
+        previous_info = dict(c.info)
         c.info = {k: p.get('info', {}).get(k, '') for k in allowed}
         if any(not isinstance(v, (str, int, list)) for v in c.info.values()):
             raise ValueError('Некорректные сведения персонажа')
         for k, kind in [('race_id', 'race'), ('class_id', 'class'), ('school_id', 'school'), ('secondary_school_id', 'school')]:
             if c.info.get(k) and not Entry.objects.filter(pk=c.info[k], kind=kind).exists():
                 raise ValueError('Выберите запись из справочника')
+        # Keep old sheets editable, but validate new/changed dependent choices.
+        def choices_changed(keys):
+            return not c.pk or any(str(c.info.get(k) or '') != str(previous_info.get(k) or '') for k in keys)
+        if choices_changed(['race_id', 'subrace']) and c.info.get('subrace'):
+            race = Entry.objects.filter(pk=c.info.get('race_id'), kind='race').first() if c.info.get('race_id') else None
+            if not race or c.info['subrace'] not in race.data.get('subraces', []):
+                raise ValueError('Выберите подрасу выбранной расы')
+        if choices_changed(['class_id', 'school_id', 'secondary_school_id']):
+            school_ids = [c.info[k] for k in ['school_id', 'secondary_school_id'] if c.info.get(k)]
+            if len(school_ids) == 2 and str(school_ids[0]) == str(school_ids[1]):
+                raise ValueError('Основная и дополнительная школы должны различаться')
+            klass = Entry.objects.filter(pk=c.info.get('class_id'), kind='class').first() if c.info.get('class_id') else None
+            for school in Entry.objects.filter(pk__in=school_ids, kind='school'):
+                if not klass or school.name not in klass.data.get('allowed_schools', []):
+                    raise ValueError('Выберите школу, доступную выбранному классу')
         creating = not c.pk
         c.revision += 1
         c.save()
