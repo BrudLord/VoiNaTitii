@@ -19,6 +19,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
 from .models import Character, Campaign, Squad, Membership, Entry, Item, Session, Scene, Event, Clock, Receipt
+from .statuses import STATUS, NEUTRAL, CONSTRUCTIVE, status_name, apply_status
 from .rules import STATS, ACTIONS, computed, fresh, definition, limit, formula, current_scene, availability, put_effect, Change, undo, rolls_required
 
 
@@ -89,19 +90,24 @@ def home(request):
 def serialize_char(c, user):
     scene = current_scene(c)
     abilities = []
-    for a in c.abilities.all():
+    calc = computed(c)
+    learned = {a.id:a for a in c.abilities.all()}
+    learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
+    for a in learned.values():
         d = a.data
-        hit_bonus = computed(c)['hit'] + sum(int(e.get('value', 0)) for e in c.runtime.get('effects', [])
+        hit_bonus = calc['hit'] + (calc['weapon_hit'] if d.get('weapon') else 0) + sum(int(e.get('value', 0)) for e in calc['effects']
                     if e.get('keyword') and e['keyword'] in d.get('keywords', []) and e.get('stat') == 'hit')
+        if d.get('system') and any(x.name=='Мистическая точность' for x in c.abilities.all()):
+            hit_bonus += calc['mods'][calc['primary']]
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
                           'hit_bonus': hit_bonus,
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
-                          'reason': availability(c, a, scene), 'formula': formula(c, a), 'critical': formula(c, a, True),
+                          'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc), 'critical': formula(c, a, True, calc),
                           'rolls_required': rolls_required(a) or bool(a.data.get('weapon'))})
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
-            'stats': c.stats, 'calc': computed(c), 'runtime': c.runtime, 'abilities': abilities,
+            'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'abilities': abilities,
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
             'memberships': list(c.memberships.values('campaign_id', 'squad_id')),
@@ -140,6 +146,7 @@ def state(request):
                         'master': master(request.user)}, 'users': list(User.objects.values('id', 'username')) if master(request.user) else [],
                         'characters': [serialize_char(c, request.user)
                         for c in Character.objects.select_related('owner').prefetch_related('abilities', 'items', 'memberships')],
+                        'rules': {'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
                         'campaigns': campaigns, 'sessions': sessions, 'scenes': scenes, 'events': visible_events,
                         'catalog': list(Entry.objects.filter(archived=False).values('id', 'kind', 'name', 'description', 'data', 'source'))})
 
@@ -178,12 +185,20 @@ def execute(user, p):
         c.level = bounded(p.get('level', 1), 1, 100)
         c.stats = {k: bounded(p.get('stats', {}).get(k, 10), -1000, 1000) for k, _ in STATS}
         allowed = ['race_id', 'class_id', 'school_id', 'secondary_school_id', 'subrace', 'craft',
-                   'background', 'alignment', 'specializations', 'skills']
+                   'background', 'alignment', 'specializations', 'skills', 'background_id', 'craft_ids', 'specialization_ids',
+                   'alignment_values','alignment_extra','priorities','skill_overrides','additional_school_ids','weapon_id','elf_element']
         previous_info = dict(c.info)
         c.info = {k: p.get('info', {}).get(k, '') for k in allowed}
-        if any(not isinstance(v, (str, int, list)) for v in c.info.values()):
+        if any(not isinstance(v, (str, int, list, dict)) for v in c.info.values()):
             raise ValueError('Некорректные сведения персонажа')
-        for k, kind in [('race_id', 'race'), ('class_id', 'class'), ('school_id', 'school'), ('secondary_school_id', 'school')]:
+        if not isinstance(c.info.get('skills',''),(str,list)):
+            raise ValueError('Навыки должны быть строкой или списком')
+        for field in ['craft_ids','specialization_ids','priorities','alignment_values','additional_school_ids']:
+            value=c.info.get(field) or []
+            if not isinstance(value,list) or any(not isinstance(x,(str,int)) for x in value):
+                raise ValueError('Выбор должен быть списком')
+            c.info[field]=value
+        for k, kind in [('race_id', 'race'), ('class_id', 'class'), ('school_id', 'school'), ('secondary_school_id', 'school'), ('background_id','background'), ('elf_element','school')]:
             if c.info.get(k) and not Entry.objects.filter(pk=c.info[k], kind=kind).exists():
                 raise ValueError('Выберите запись из справочника')
         # Keep old sheets editable, but validate new/changed dependent choices.
@@ -193,11 +208,21 @@ def execute(user, p):
             race = Entry.objects.filter(pk=c.info.get('race_id'), kind='race').first() if c.info.get('race_id') else None
             if not race or c.info['subrace'] not in race.data.get('subraces', []):
                 raise ValueError('Выберите подрасу выбранной расы')
-        if choices_changed(['class_id', 'school_id', 'secondary_school_id']):
-            school_ids = [c.info[k] for k in ['school_id', 'secondary_school_id'] if c.info.get(k)]
-            if len(school_ids) == 2 and str(school_ids[0]) == str(school_ids[1]):
+        if not isinstance(c.info.get('additional_school_ids') or [],list):
+            raise ValueError('Дополнительные школы должны быть списком')
+        c.info['additional_school_ids'] = c.info.get('additional_school_ids') or []
+        c.info['skill_overrides'] = c.info.get('skill_overrides') or {}
+        if not isinstance(c.info['skill_overrides'],dict) or any(type(v) is not bool for v in c.info['skill_overrides'].values()):
+            raise ValueError('Владения навыками должны быть отметками')
+        if choices_changed(['class_id', 'school_id', 'secondary_school_id','additional_school_ids']):
+            school_ids = [c.info[k] for k in ['school_id', 'secondary_school_id'] if c.info.get(k)] + c.info['additional_school_ids']
+            if len(set(map(str,school_ids))) != len(school_ids):
                 raise ValueError('Основная и дополнительная школы должны различаться')
             klass = Entry.objects.filter(pk=c.info.get('class_id'), kind='class').first() if c.info.get('class_id') else None
+            if len(school_ids)>1+(klass.data.get('extra_schools',1) if klass else 1):
+                raise ValueError('Слишком много школ для этого класса')
+            if Entry.objects.filter(pk__in=school_ids,kind='school').count()!=len(school_ids):
+                raise ValueError('Выберите школу из справочника')
             for school in Entry.objects.filter(pk__in=school_ids, kind='school'):
                 if not klass or school.name not in klass.data.get('allowed_schools', []):
                     raise ValueError('Выберите школу, доступную выбранному классу')
@@ -307,7 +332,8 @@ def execute(user, p):
         change.watch(scene).state['active'] = True
         for c in chars:
             change.watch(c)
-            c.runtime.update(used={}, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0)
+            c.runtime.update(used={}, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
+                             stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
         change.finish()
         return {'id': scene.id}
     elif op in ['scene.turn', 'scene.end']:
@@ -330,7 +356,7 @@ def execute(user, p):
         if op == 'scene.end':
             scene.state['active'] = False
             for c in chars.values():
-                c.runtime.update(effects=[], used={}, temp=0, actions=dict(ACTIONS))
+                c.runtime.update(effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
                 c.runtime['hp'] = computed(c)['max_hp']
         else:
             c = chars[current.id]
@@ -350,6 +376,10 @@ def execute(user, p):
                     c.runtime.setdefault('actions', {})['reaction'] = computed(c)['reactions']
             next_char = chars[order[scene.state['turn']]]
             next_char.runtime.setdefault('actions', {}).update(ACTIONS)
+            next_char.runtime['stun_pending']=0
+            for e in next_char.runtime.get('effects',[]):
+                if status_name(e) in ['Оглушение','Оцепенение','Заморозка']:
+                    next_char.runtime['stun_pending']=min(3,next_char.runtime['stun_pending']+abs(e.get('value',1)))
         change.finish()
     elif op == 'hp':
         require_master(user)
@@ -359,9 +389,13 @@ def execute(user, p):
         value = bounded(p.get('value'), 0, 100000)
         hp, temp = c.runtime.get('hp', 0), c.runtime.get('temp', 0)
         mode = p.get('mode')
+        if mode not in ['damage','heal','temp','temp_set','set']:
+            raise ValueError('Неизвестная операция с ХП')
         if mode == 'damage':
             c.runtime['temp'] = max(0, temp - value)
             c.runtime['hp'] = max(0, hp - max(0, value - temp))
+            if value:
+                c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if status_name(e)!='Сон']
         elif mode == 'heal':
             c.runtime['hp'] = min(computed(c)['max_hp'], hp + value)
         elif mode == 'temp':
@@ -373,6 +407,41 @@ def execute(user, p):
         change.finish()
     elif op in ['ability.use', 'aura.set']:
         use_ability(user, p)
+    elif op == 'effect.apply':
+        require_master(user)
+        c = get_object_or_404(Character,pk=p['character'])
+        name=str(p.get('name','')).strip()[:160]
+        stat,sign=STATUS.get(name,(p.get('stat','status'),1))
+        effect={'key':'status:'+name,'name':name,'status':name if name in STATUS else '',
+                'stat':stat,'value':bounded(p.get('value',1),0,1000)*sign,'duration':p.get('duration','turns'),
+                'remaining':bounded(p.get('turns',3),1,100),'source':user.username,'source_id':None}
+        validate_entry({'effects':[dict(effect,turns=effect['remaining'])]})
+        change=Change(user,'Эффект · '+name,current_scene(c))
+        change.watch(c)
+        if p.get('remove'):
+            c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if e.get('key')!=p.get('key')]
+        else:
+            apply_status(c,effect,p.get('reaction'))
+        change.finish()
+    elif op == 'check.roll':
+        c=owned(user,p['character'])
+        skill=p.get('skill')
+        calc=computed(c)
+        if skill not in calc['skills']:
+            raise ValueError('Выберите навык')
+        roll=bounded(p.get('roll'),-1000,1000)
+        bonus=calc['skills'][skill]['value']+(3 if p.get('specialization') else 0)
+        Change(user,'Проверка '+skill+' · '+c.name,current_scene(c),
+               inputs={'roll_result':str(roll),'bonus':bonus,'total':roll+bonus,'specialization':str(p.get('specialization',''))[:160]}).finish(record=True)
+        return {'total':roll+bonus,'bonus':bonus}
+    elif op == 'weapon.select':
+        c = owned(user,p['character'])
+        weapon = get_object_or_404(Item,pk=p['item'],character=c,equipped=True) if p.get('item') else None
+        if weapon and not weapon.data.get('dice'):
+            raise ValueError('Выберите оружие')
+        change = Change(user,'Выбор оружия · '+c.name,current_scene(c))
+        change.watch(c).runtime['weapon_id'] = weapon.id if weapon else 0
+        change.finish()
     elif op == 'action.spend':
         c = owned(user, p['character'])
         scene = current_scene(c)
@@ -384,6 +453,15 @@ def execute(user, p):
         if key not in ['main', 'minor', 'move'] or c.runtime.get('actions', {}).get(key, 0) < 1:
             raise ValueError('Действие недоступно')
         c.runtime['actions'][key] -= 1
+        if c.runtime.get('stun_pending',0):
+            if p.get('exchange'):
+                raise ValueError('Оглушение: сначала укажите пропущенное действие')
+            c.runtime['stun_pending']-=1
+            for e in list(c.runtime.get('effects',[])):
+                if status_name(e) in ['Оглушение','Оцепенение','Заморозка']:
+                    e['value']=max(0,e['value']-1)
+                    if not e['value']: c.runtime['effects'].remove(e)
+                    break
         if p.get('exchange'):
             if key != 'main' or p['exchange'] not in ['minor', 'move']:
                 raise ValueError('Можно обменять основное на малое или движение')
@@ -397,6 +475,8 @@ def execute(user, p):
 
 
 def validate_entry(d):
+    if not isinstance(d,dict):
+        raise ValueError('Параметры должны быть объектом')
     for key in ['formula', 'dice', 'stat', 'source_name']:
         if key in d and not isinstance(d[key], str):
             raise ValueError('Параметр ' + key + ' должен быть строкой')
@@ -411,13 +491,15 @@ def validate_entry(d):
         raise ValueError('Некорректный тип действия')
     if d.get('category', 'active') not in ['active', 'passive', 'noncombat']:
         raise ValueError('Некорректная категория')
-    for field in ['keywords', 'requires']:
+    for field in ['keywords', 'requires','subraces','allowed_schools','families']:
         if field in d and (not isinstance(d[field], list) or any(not isinstance(x, str) for x in d[field])):
             raise ValueError('Ключевые слова должны быть списком строк')
+    if not isinstance(d,dict):
+        raise ValueError('Параметры должны быть объектом')
     if not isinstance(d.get('effects', []), list):
         raise ValueError('Эффекты должны быть списком')
     for e in d.get('effects', []):
-        if not isinstance(e, dict) or e.get('stat') not in ['hp', 'temp', 'hit', 'damage', 'ac', 'speed'] + [k for k, _ in STATS]:
+        if not isinstance(e, dict) or e.get('stat') not in ['hp', 'temp', 'hit', 'damage', 'ac', 'speed', 'max_hp', 'status'] + [k for k, _ in STATS]:
             raise ValueError('Некорректный эффект')
         if type(e.get('value', 0)) is not int or type(e.get('turns', 3)) is not int:
             raise ValueError('Величина и длительность эффекта должны быть целыми числами')
@@ -432,6 +514,30 @@ def item_action(user, p):
     item = get_object_or_404(Item, pk=p['id']) if p.get('id') else Item()
     if item.pk:
         owned(user, item.character_id) if item.character_id else access_campaign(user, item.campaign_id)
+    if op in ['item.delete','item.transfer'] and item.character_id and current_scene(item.character):
+        raise ValueError('Передача и удаление предметов доступны после боя. В бою используйте надевание/снятие.')
+    if op == 'item.equip':
+        if not item.character_id:
+            raise ValueError('Сначала передайте предмет персонажу')
+        c = owned(user,item.character_id)
+        scene = current_scene(c)
+        change = Change(user,'Экипировка · '+item.name,scene)
+        change.watch(item);change.watch(c)
+        if scene:
+            if item.data.get('item_type')=='armor':
+                raise ValueError('Доспех меняется вне боя')
+            if scene.state['order'][scene.state['turn']]!=c.id or c.runtime['actions'].get('main',0)<1:
+                raise ValueError('Для смены оружия нужно основное действие в свой ход')
+            c.runtime['actions']['main']-=1
+        item.equipped=not item.equipped
+        if item.equipped and item.data.get('dice'):
+            c.runtime['weapon_id']=item.pk
+        if item.equipped and item.data.get('item_type')=='armor':
+            for other in c.items.filter(equipped=True).exclude(pk=item.pk):
+                if other.data.get('item_type')=='armor':
+                    change.watch(other).equipped=False
+        change.finish()
+        return
     if op == 'item.delete':
         item.delete()
         return
@@ -472,7 +578,9 @@ def item_action(user, p):
 
 def use_ability(user, p):
     c = owned(user, p['character'])
-    a = get_object_or_404(c.abilities, pk=p['ability'])
+    a = get_object_or_404(Entry, pk=p['ability'],kind='ability',archived=False)
+    if not a.data.get('system') and not c.abilities.filter(pk=a.pk).exists():
+        raise PermissionDenied('Персонаж не владеет этим умением')
     scene = current_scene(c)
     if not scene:
         raise ValueError('Умение можно применить в активном бою')
@@ -495,7 +603,7 @@ def use_ability(user, p):
     if d.get('target') == 'single' and len(ids) > 1:
         raise ValueError('Выберите одну цель')
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
-                    inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids})
+                    inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
     if not aura:
         act = d.get('action', 'main')
@@ -532,7 +640,11 @@ def use_ability(user, p):
                               'remaining': int(e.get('turns', 3))}
                     if aura:
                         effect.update(key=f'aura:{c.id}:{a.id}:{index}', aura_source=f'{c.id}:{a.id}')
-                    put_effect(t, effect)
+                    effect['status']=e.get('status') or status_name(effect)
+                    if aura:
+                        put_effect(t,effect)
+                    else:
+                        apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'))
     change.finish()
 
 

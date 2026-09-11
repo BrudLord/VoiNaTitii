@@ -1,6 +1,7 @@
 import copy
 import re
-from .models import Character, Entry, Event, Scene
+from .models import Character, Entry, Event, Scene, Item
+from .book_audit import SKILLS
 
 STATS = [('str', 'Сила'), ('dex', 'Ловкость'), ('con', 'Телосложение'),
          ('int', 'Интеллект'), ('wis', 'Мудрость'), ('cha', 'Харизма')]
@@ -18,6 +19,7 @@ def definition(pk):
 def computed(c):
     stats = {k: int(c.stats.get(k, 10)) for k, _ in STATS}
     effects = list(c.runtime.get('effects', []))
+    effects.extend(e for i in c.items.filter(equipped=True) for e in i.data.get('effects',[]))
     for ability in c.abilities.all():
         if ability.data.get('category') == 'passive' and not ability.data.get('aura') and not ability.data.get('manual'):
             effects.extend(e for e in ability.data.get('effects', []) if not e.get('manual'))
@@ -32,29 +34,72 @@ def computed(c):
     rd = race.data if race else {}
     primary = (school.data if school else {}).get('stat', 'wis')
     armor = 0
+    other_armor = 0
+    warnings = []
     bonuses = {'ac': 0, 'speed': 0, 'hit': 0, 'damage': 0}
     keywords = []
-    weapon = '1к4'
+    weapon = ''
+    weapon_item = None
+    weapon_proficient = False
+    weapon_hit = 0
     weapon_school = primary
     crit = 0
-    for item in c.items.filter(equipped=True):
-        armor += int(item.data.get('armor', 0))
-        keywords += item.data.get('keywords', [])
-        if item.data.get('dice'):
+    equipped = list(c.items.filter(equipped=True).order_by('id'))
+    weapons = [i for i in equipped if i.data.get('dice')]
+    weapon_id=c.runtime.get('weapon_id',c.info.get('weapon_id'))
+    selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
+    school_ids = [c.info.get('school_id'),c.info.get('secondary_school_id')] + c.info.get('additional_school_ids',[])
+    trained = {e.name for e in Entry.objects.filter(pk__in=[x for x in school_ids if str(x).isdigit()],kind='school')}
+    for item in equipped:
+        if item.data.get('item_type') in ['armor','shield'] or not item.data.get('item_type'):
+            armor += int(item.data.get('armor', 0))
+        else:
+            other_armor += int(item.data.get('armor', 0))
+        if not item.data.get('dice') or item == selected:
+            keywords += item.data.get('keywords', [])
+        if selected and item.pk == selected.pk:
             weapon = item.data['dice']
-            weapon_school = item.data.get('stat', primary)
+            trained_family = next((name for name in item.data.get('families',[]) if name in trained),None)
+            matched_school = Entry.objects.filter(kind='school',name=trained_family).first() if trained_family else None
+            weapon_school = matched_school.data.get('stat',primary) if matched_school else item.data.get('stat', primary)
             crit += int(item.data.get('crit', 0))
+            weapon_item = item.id
+            weapon_proficient = bool(item.data.get('no_proficiency') or trained.intersection(item.data.get('families',item.data.get('keywords',[]))))
+            weapon_hit = int(item.data.get('hit',0))
+    elf_element=definition(c.info.get('elf_element'))
+    if rd.get('element_damage') and elf_element:
+        effects.append({'stat':'damage','value':rd['element_damage'],'keyword':elf_element.name})
     for e in effects:
         if not e.get('keyword') and e.get('stat') in bonuses:
             bonuses[e['stat']] += e.get('value', 0)
-    max_hp = max(1, int(kd.get('hp_base', 18)) + stats['con'] +
+    passive_hp = sum(int(a.data.get('passive_hp',0)) for a in c.abilities.all())
+    extra_hp = int(rd.get('hp_bonus',0)) + passive_hp + sum(e.get('value',0) for e in effects if e.get('stat')=='max_hp')
+    max_hp = max(1, extra_hp + int(kd.get('hp_base', 18)) + stats['con'] +
                  (c.level - 1) * (int(kd.get('hp_level', 4)) + mods['con']))
+    from .statuses import status_name
+    statuses={status_name(e) for e in effects}
+    if 'Обездвижен' in statuses: bonuses['speed']=-100000
     return {'stats': stats, 'mods': mods, 'sum': sum(stats.values()), 'max_hp': max_hp,
-            'ac': max(0, 5 + mods['dex'] + min(5, armor) + bonuses['ac']),
+            'ac': max(0, 5 + mods['dex'] + min(5, armor) + other_armor + int(rd.get('ac_bonus',0)) + bonuses['ac']),
             'speed': max(0, int(rd.get('speed', 6)) + bonuses['speed']),
             'hit': bonuses['hit'], 'damage': bonuses['damage'], 'primary': primary,
             'weapon_stat': weapon_school, 'weapon': weapon, 'crit': crit,
+            'weapon_id':weapon_item,'weapon_proficient':weapon_proficient,'weapon_hit':weapon_hit,
+            'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
+            'step':int(rd.get('step',1)),'resistance':int(rd.get('resistance',0)),
+            'skills':skill_values(c,mods,klass),'effects':effects,
             'keywords': keywords, 'reactions': max(1, mods['wis']), 'orc': bool(rd.get('orc'))}
+
+
+def skill_values(c, mods, klass=None):
+    background = definition(c.info.get('background_id'))
+    automatic = {e.data.get('skill') for e in [klass,background] if e}
+    raw = c.info.get('skills', [])
+    selected = set(raw if isinstance(raw,list) else [s.strip() for s in raw.split(',')])
+    overrides = c.info.get('skill_overrides',{})
+    return {name:{'value':mods[stat]+(2 if overrides.get(name,name in selected or name in automatic) else 0),
+                  'trained':bool(overrides.get(name,name in selected or name in automatic)), 'stat':stat}
+            for name,stat in SKILLS.items()}
 
 
 def limit(level, circle):
@@ -65,13 +110,19 @@ def limit(level, circle):
     return table[min(10, max(1, level))][min(3, max(1, circle)) - 1]
 
 
-def formula(c, ability, critical=False):
-    calc = computed(c)
+def formula(c, ability, critical=False, calc=None):
+    calc = calc or computed(c)
     d = ability.data
     mod_key = d.get('stat') or calc['primary']
     if d.get('weapon'):
         mod_key = calc['weapon_stat']
     result = d.get('formula', '')
+    standard = bool(d.get('system')) or ability.name in ['Стандартная атака','Провоцированная атака']
+    if standard and calc['unarmed']:
+        return str(calc['mods']['str'] + calc['damage'])
+    weapon_mod = calc['mods'].get(mod_key,0)
+    if standard and not calc['weapon_proficient']:
+        weapon_mod = 0
     def weapon(match):
         n = int(match.group(1))
         return re.sub(r'(\d+)[кd](\d+)', lambda m: f'{n * int(m[1])}к{m[2]}', calc['weapon'])
@@ -81,9 +132,9 @@ def formula(c, ability, critical=False):
         result = re.sub(r'(\d+)[кd](\d+)', lambda m: f'{int(m[1]) * factor}к{m[2]}', result)
         if calc['orc'] and d.get('weapon'):
             result += ' + ' + calc['weapon']
-    result = result.replace('Мод', str(calc['mods'].get(mod_key, 0)))
+    result = result.replace('Мод', str(weapon_mod))
     damage = calc['damage']
-    for e in c.runtime.get('effects', []):
+    for e in calc['effects']:
         if e.get('keyword') in d.get('keywords', []) and e.get('keyword') and e.get('stat') == 'damage':
             damage += e.get('value', 0)
     if result and d.get('damage', False) and damage:
@@ -98,7 +149,8 @@ def current_scene(c):
     return None
 
 
-def availability(c, ability, scene=None):
+def availability(c, ability, scene=None, calc=None):
+    calc = calc or computed(c)
     d = ability.data
     category = d.get('category', 'active')
     if category == 'passive':
@@ -107,16 +159,26 @@ def availability(c, ability, scene=None):
         return 'Только вне боя' if scene else ''
     if not scene:
         return 'Начните бой'
+    from .statuses import status_name
+    statuses={status_name(e) for e in c.runtime.get('effects',[])}
+    if statuses.intersection({'Сон','Страх'}):
+        return 'Персонаж пропускает ход: '+', '.join(statuses.intersection({'Сон','Страх'}))
     action = d.get('action', 'main')
-    if action != 'reaction' and scene.state['order'][scene.state['turn']] != c.id:
+    if c.runtime.get('stun_pending',0) and scene.state['order'][scene.state['turn']]==c.id:
+        return 'Оглушение: выберите пропускаемые действия'
+    if action == 'reaction' and scene.state['order'][scene.state['turn']] == c.id:
+        return 'Реакция доступна на чужом ходу'
+    if action not in ['reaction','free'] and scene.state['order'][scene.state['turn']] != c.id:
         return 'Ход другого персонажа'
     if action != 'free' and c.runtime.get('actions', {}).get(action, 0) < 1:
         return 'Нет нужного действия'
     count = limit(c.level, int(d.get('circle', 0)))
     if count is not None and c.runtime.get('used', {}).get(str(ability.id), 0) >= count:
         return 'Применения закончились'
+    if d.get('weapon') and not calc['weapon'] and not d.get('system') and ability.name!='Стандартная атака':
+        return 'Нужно оружие в руках'
     required = d.get('requires', [])
-    if required and not set(required).intersection(computed(c)['keywords']):
+    if required and not set(required).intersection(calc['keywords']):
         return 'Нужно подходящее оружие'
     return ''
 
@@ -126,7 +188,7 @@ def put_effect(c, effect):
     # Same named status: strongest magnitude, renewed target-turn duration.
     for old in existing:
         if old['key'] == effect['key']:
-            effect['value'] = max(old['value'], effect['value'])
+            effect['value'] = old['value'] if abs(old['value'])>abs(effect['value']) else effect['value']
             existing.remove(old)
             break
     existing.append(effect)
@@ -141,20 +203,20 @@ class Change:
         self.inputs = inputs or {}
 
     def watch(self, obj):
-        key = ('scene:' if isinstance(obj, Scene) else 'character:') + str(obj.pk)
+        key = ('scene:' if isinstance(obj, Scene) else 'item:' if isinstance(obj,Item) else 'character:') + str(obj.pk)
         if key not in self.objects:
             self.objects[key] = obj
-            self.before[key] = copy.deepcopy(obj.state if isinstance(obj, Scene) else obj.runtime)
+            self.before[key] = copy.deepcopy({'equipped':obj.equipped} if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime)
         return obj
 
-    def finish(self):
+    def finish(self, record=False):
         after = {}
         for key, obj in self.objects.items():
-            value = obj.state if isinstance(obj, Scene) else obj.runtime
+            value = {'equipped':obj.equipped} if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime
             if value != self.before[key]:
                 after[key] = copy.deepcopy(value)
-                obj.save(update_fields=['state'] if isinstance(obj, Scene) else ['runtime'])
-        if after:
+                obj.save(update_fields=['equipped'] if isinstance(obj,Item) else ['state'] if isinstance(obj, Scene) else ['runtime'])
+        if after or record:
             Event.objects.filter(actor=self.user, undone=True).update(redoable=False)
             Event.objects.create(actor=self.user, label=self.label, scene=self.scene,
                                  before={k: self.before[k] for k in after}, after=after, inputs=self.inputs)
@@ -184,11 +246,11 @@ def undo(user, redo=False):
     objects = []
     for key in keys:
         kind, pk = key.split(':')
-        obj = (Scene if kind == 'scene' else Character).objects.get(pk=pk)
-        attr = 'state' if kind == 'scene' else 'runtime'
-        if getattr(obj, attr) != expected[key]:
+        obj = (Scene if kind == 'scene' else Item if kind=='item' else Character).objects.get(pk=pk)
+        attr = 'equipped' if kind=='item' else 'state' if kind == 'scene' else 'runtime'
+        if getattr(obj, attr) != (expected[key]['equipped'] if kind=='item' else expected[key]):
             raise ValueError('Состояние изменилось. Сначала отмените зависимые действия.')
-        objects.append((obj, attr, replacement[key]))
+        objects.append((obj, attr, replacement[key]['equipped'] if kind=='item' else replacement[key]))
     for obj, attr, value in objects:
         setattr(obj, attr, value)
         obj.save(update_fields=[attr])

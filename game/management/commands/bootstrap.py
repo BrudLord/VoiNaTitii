@@ -112,4 +112,5 @@ class Command(BaseCommand):
             add('item', name, f'{kind}. {special} Стоимость: {price}', data)
         from django.core.management import call_command
         call_command('structure_catalog')
+        call_command('audit_book')
         self.stdout.write(f'Справочник: {Entry.objects.count()} записей. Мастер готов.')

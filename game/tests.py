@@ -219,3 +219,101 @@ class GameTests(TestCase):
         # A legacy sheet with a school but no class can still save unrelated edits.
         self.post(self.alice, {'op': 'character.save', 'id': self.a.id, 'revision': self.a.revision,
                              'name': 'Старый лист', 'info': self.a.info})
+
+    def test_audit_racial_and_passive_hp_and_skill_calculation(self):
+        race = Entry.objects.create(kind='race', name='Гном', data={'hp_bonus': 5, 'speed': 5})
+        klass = Entry.objects.create(kind='class', name='Класс', data={'hp_base': 18, 'hp_level': 4, 'skill': 'История'})
+        passive = Entry.objects.create(kind='ability', name='Укрепленные органы', data={'category': 'passive', 'passive_hp': 10})
+        self.a.info.update(race_id=race.id, class_id=klass.id)
+        self.a.abilities.add(passive)
+        calc = computed(self.a)
+        self.assertEqual(calc['max_hp'], 43)
+        self.assertEqual(calc['speed'], 5)
+        self.assertTrue(calc['skills']['История']['trained'])
+        self.a.info['skill_overrides'] = {'История': False}
+        self.assertFalse(computed(self.a)['skills']['История']['trained'])
+        race.data={'ac_bonus':1};race.save()
+        self.assertEqual(computed(self.a)['ac'], 6)
+
+    def test_audit_weapon_proficiency_selection_and_item_effects(self):
+        school=Entry.objects.create(kind='school',name='Кинжалы',data={'stat':'dex'})
+        self.a.stats['dex']=16
+        dagger=Item.objects.create(character=self.a,name='Кинжал',equipped=True,data={'dice':'1к4','stat':'dex','families':['Кинжалы']})
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'formula':'1Ор + Мод'})
+        self.assertEqual(formula(self.a,attack),'1к4 + 0')
+        self.a.info['school_id']=school.pk
+        self.assertEqual(formula(self.a,attack),'1к4 + 3')
+        self.a.runtime['weapon_id']=0
+        self.assertEqual(formula(self.a,attack),'0')
+        Item.objects.create(character=self.a,name='Амулет',equipped=True,data={'item_type':'other','armor':2,'effects':[{'stat':'max_hp','value':4}]})
+        Item.objects.create(character=self.a,name='Латы',equipped=True,data={'item_type':'armor','armor':5})
+        self.assertEqual(computed(self.a)['ac'],15)
+        self.assertEqual(computed(self.a)['max_hp'],32)
+
+    def test_audit_item_equip_undo_during_combat(self):
+        item=Item.objects.create(character=self.a,name='Кинжал',data={'dice':'1к4','item_type':'weapon'})
+        self.start()
+        self.post(self.alice,{'op':'item.equip','id':item.id})
+        item.refresh_from_db();self.a.refresh_from_db()
+        self.assertTrue(item.equipped);self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.post(self.alice,{'op':'undo'})
+        item.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(item.equipped);self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,{'op':'redo'})
+        item.refresh_from_db();self.assertTrue(item.equipped)
+        self.post(self.alice,{'op':'item.delete','id':item.id},400)
+
+    def test_audit_negative_status_strength_and_reaction(self):
+        from .rules import put_effect
+        from .statuses import apply_status
+        put_effect(self.a,{'key':'curse','value':-2})
+        put_effect(self.a,{'key':'curse','value':-5})
+        self.assertEqual(self.a.runtime['effects'][0]['value'],-5)
+        self.a.runtime['effects']=[]
+        apply_status(self.a,{'name':'Проклятье','stat':'hit','value':-3,'remaining':3,'duration':'turns'})
+        incoming={'name':'Благословение','stat':'hit','value':2,'remaining':3,'duration':'turns'}
+        with self.assertRaises(ValueError):apply_status(self.a,incoming)
+        apply_status(self.a,incoming,'status:Проклятье')
+        self.assertEqual(self.a.runtime['effects'],[])
+        apply_status(self.a,{'name':'Оглушение','stat':'status','value':2,'remaining':3,'duration':'turns'})
+        apply_status(self.a,{'name':'Оглушение','stat':'status','value':2,'remaining':3,'duration':'turns'})
+        self.assertEqual(self.a.runtime['effects'][0]['value'],4)
+
+    def test_audit_reaction_wait_is_atomic(self):
+        scene=self.start()
+        self.post(self.gm,{'op':'effect.apply','character':self.b.id,'name':'Проклятье','value':3})
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id]},400)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id],
+                            'reactions':{f'{self.b.id}:0':'status:Проклятье'}})
+        self.b.refresh_from_db();self.assertEqual(computed(self.b)['hit'],0)
+        self.assertEqual(self.b.runtime['temp'],5)
+        self.assertEqual(computed(self.b)['damage'],1)
+
+    def test_audit_check_records_physical_roll_without_spending(self):
+        result=self.post(self.alice,{'op':'check.roll','character':self.a.id,'skill':'История','roll':7,'specialization':'Военная история'})
+        self.assertEqual(result['total'],10)
+        event=Event.objects.last();self.assertEqual(event.inputs['total'],10)
+        self.post(self.alice,{'op':'undo'});event.refresh_from_db();self.assertTrue(event.undone)
+        self.post(self.bob,{'op':'check.roll','character':self.a.id,'skill':'История','roll':7},403)
+
+    def test_audit_book_import_complete_sources_and_safe_fixed_effects(self):
+        from django.conf import settings
+        from .book_audit import records, abilities
+        text=(settings.BASE_DIR/'rules/player-book.txt').read_text()
+        rows=list(abilities(text));self.assertEqual(len(rows),863)
+        self.assertEqual(sum(name=='Сквозной удар' for name,_,_,_ in rows),2)
+        fixed=next(data for name,_,data,_ in rows if name=='Жизненный запас')
+        self.assertIn({'stat':'temp','value':5},fixed['effects'])
+        heal=next(data for name,_,data,_ in rows if name=='Исцеление')
+        self.assertNotIn('effects',heal)
+        self.assertTrue(heal['rolls'])
+        specs=[name for kind,name,_,_ in records(text) if kind=='specialization']
+        self.assertIn('Военная история',specs);self.assertIn('Хавнгрим',specs)
+
+    def test_audit_three_secondary_schools(self):
+        klass=Entry.objects.create(kind='class',name='Стихийный маг',data={'extra_schools':3,'allowed_schools':['Огонь','Вода','Земля','Воздух']})
+        schools=[Entry.objects.create(kind='school',name=n) for n in klass.data['allowed_schools']]
+        result=self.post(self.alice,{'op':'character.save','name':'Маг','info':{'class_id':klass.id,'school_id':schools[0].id,
+            'secondary_school_id':schools[1].id,'additional_school_ids':[schools[2].id,schools[3].id]}})
+        self.assertEqual(len(Character.objects.get(pk=result['id']).info['additional_school_ids']),2)

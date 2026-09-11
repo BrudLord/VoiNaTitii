@@ -6,3 +6,7 @@
 [hidden]{display:none!important}
 
 .catalog-section{margin:24px 0 12px;font-size:20px}.catalog-source{margin:16px 0 10px;color:var(--gold);font-size:15px}
+
+.skill-checks{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.skill-checks label{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.skill-checks input{width:auto}.skill-checks small{font-size:11px}.checklist details{font-size:12px}#origin-hint{max-height:150px;overflow:auto}#specialization-list .checklist{max-height:220px;overflow:auto}
+
+.statgrid{grid-template-columns:repeat(3,minmax(0,1fr))}.stat{min-width:0;padding:8px 3px}.stat small{overflow-wrap:anywhere;letter-spacing:0}.summary .stat small{font-size:.59rem}
