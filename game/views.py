@@ -3,6 +3,7 @@ import difflib
 import io
 import json
 import uuid
+from .models import JournalEntry
 
 from PIL import Image, ImageOps
 from django.contrib import messages
@@ -13,7 +14,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
-from django.http import JsonResponse, FileResponse, HttpResponseBadRequest
+from django.http import JsonResponse, FileResponse, HttpResponseBadRequest, Http404
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
@@ -127,6 +128,7 @@ def state(request):
         if member:
             accessible.add(c.id)
         campaigns.append({'id': c.id, 'name': c.name, 'description': c.description, 'member': member,
+                          'journal': list(c.journal.values('id','kind','title','body','person','reward','status','steps','tags','archived','revision','updated')) if member else [],
                           'players': list(c.players.values('id', 'username')) if member else [],
                           'notes': c.notes if member else None, 'note_revision': c.note_revision if member else None,
                           'squads': list(c.squads.values('id', 'name')),
@@ -250,6 +252,34 @@ def execute(user, p):
         c.private_notes = c.private_notes[:50000]
         c.save(update_fields=['private_notes'])
         return {'text': c.private_notes}
+    if op == 'journal.save':
+        campaign = access_campaign(user,p['campaign'])
+        record = get_object_or_404(JournalEntry,pk=p['id'],campaign=campaign) if p.get('id') else JournalEntry(campaign=campaign)
+        if record.pk and p.get('revision') != record.revision:
+            raise ValueError('Запись изменена другим участником. Откройте актуальную версию; ваш текст сохранён в форме.')
+        if 'archived' in p:
+            record.archived = bool(p['archived'])
+        else:
+            record.kind=p.get('kind','quest')
+            record.status=p.get('status','active')
+            if record.kind not in dict(JournalEntry.KINDS) or record.status not in dict(JournalEntry.STATUSES):
+                raise ValueError('Неизвестный раздел или статус')
+            record.title=str(p.get('title','')).strip()[:160]
+            if not record.title: raise ValueError('Укажите название')
+            record.body=str(p.get('body',''))[:50000]
+            record.person=str(p.get('person',''))[:160]
+            record.reward=str(p.get('reward',''))[:500]
+            steps=p.get('steps',[])
+            if not isinstance(steps,list) or len(steps)>100 or any(not isinstance(x,dict) or not isinstance(x.get('text'),str) or type(x.get('done')) is not bool for x in steps):
+                raise ValueError('Проверьте этапы задания')
+            record.steps=[{'text':x['text'].strip()[:500],'done':x['done']} for x in steps if x['text'].strip()]
+            tags=p.get('tags',[])
+            if not isinstance(tags,list) or any(not isinstance(x,str) for x in tags): raise ValueError('Проверьте метки')
+            record.tags=list(dict.fromkeys(x.strip()[:40] for x in tags if x.strip()))[:20]
+        record.updated_by=user
+        record.revision=record.revision+1 if record.pk else 1
+        record.save()
+        return {'id':record.id,'revision':record.revision}
     if op == 'campaign.join':
         campaign = get_object_or_404(Campaign, pk=p['campaign'])
         campaign.players.add(user)
@@ -668,6 +698,8 @@ def action(request):
             clock.save(update_fields=['revision'])
             Receipt.objects.create(actor=request.user, key=key, result=result)
         return JsonResponse(result)
+    except Http404:
+        return JsonResponse({'error':'Запись не найдена'},status=404)
     except PermissionDenied as e:
         return JsonResponse({'error': str(e)}, status=403)
     except (ValueError, TypeError, KeyError, ValidationError) as e:

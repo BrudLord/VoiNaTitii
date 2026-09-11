@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Entry, Character, Campaign, Squad, Session, Clock
+from .models import Entry, Character, Campaign, Squad, Session, Clock, JournalEntry
 from django.db.models import F
 
 
@@ -46,3 +46,5 @@ admin.site.register(Squad, RevisionAdmin)
 admin.site.register(Session, RevisionAdmin)
 
 admin.site.site_header = 'Войны Стихий · Справочники'
+
+admin.site.register(JournalEntry, RevisionAdmin)

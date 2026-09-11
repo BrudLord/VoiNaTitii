@@ -113,3 +113,24 @@ class Receipt(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['actor', 'key'], name='unique_command')]
+
+
+class JournalEntry(models.Model):
+    KINDS = [('quest', 'Квест'), ('note', 'Запись'), ('lore', 'Мир')]
+    STATUSES = [('active', 'В работе'), ('done', 'Выполнено'), ('paused', 'Отложено'), ('failed', 'Провалено')]
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name='journal')
+    kind = models.CharField(max_length=10, choices=KINDS, default='quest')
+    title = models.CharField(max_length=160)
+    body = models.TextField(blank=True)
+    person = models.CharField(max_length=160, blank=True)
+    reward = models.CharField(max_length=500, blank=True)
+    status = models.CharField(max_length=10, choices=STATUSES, default='active')
+    steps = models.JSONField(default=list, blank=True)
+    tags = models.JSONField(default=list, blank=True)
+    archived = models.BooleanField(default=False)
+    revision = models.PositiveIntegerField(default=1)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated', '-id']

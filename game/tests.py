@@ -328,3 +328,37 @@ class GameTests(TestCase):
         result=self.post(self.alice,{'op':'character.save','name':'Маг','info':{'class_id':klass.id,'school_id':schools[0].id,
             'secondary_school_id':schools[1].id,'additional_school_ids':[schools[2].id,schools[3].id]}})
         self.assertEqual(len(Character.objects.get(pk=result['id']).info['additional_school_ids']),2)
+
+    def test_journal_membership_and_concurrent_edits(self):
+        from .models import JournalEntry
+        payload={'op':'journal.save','campaign':self.campaign.id,'title':'Найти кузнеца','kind':'quest',
+                 'body':'Северный город','person':'Петри','reward':'300 золотых','status':'active',
+                 'steps':[{'text':'Узнать дорогу','done':False}],'tags':['Город','Город']}
+        outsider=User.objects.create_user('traveller')
+        self.post(outsider,payload,403)
+        self.post(outsider,{'op':'campaign.join','campaign':self.campaign.id})
+        created=self.post(outsider,payload)
+        quest=JournalEntry.objects.get(pk=created['id'])
+        self.assertEqual(quest.tags,['Город'])
+        changed={**payload,'id':quest.id,'revision':1,'status':'done'}
+        self.post(self.alice,changed)
+        self.post(self.bob,{**changed,'body':'Старая версия'},400)
+        quest.refresh_from_db();self.assertEqual(quest.status,'done');self.assertEqual(quest.body,'Северный город')
+        self.post(self.bob,{'op':'journal.save','campaign':self.campaign.id,'id':quest.id,'revision':2,'archived':True})
+        quest.refresh_from_db();self.assertTrue(quest.archived)
+        self.post(self.bob,{'op':'journal.save','campaign':self.campaign.id,'id':quest.id,'revision':3,'archived':False})
+        other=Campaign.objects.create(name='Другой мир');other.players.add(self.bob)
+        self.post(self.bob,{**changed,'campaign':other.id,'revision':4},404)
+        self.client.force_login(self.alice)
+        data=self.client.get('/api/state/').json()
+        shared=next(c for c in data['campaigns'] if c['id']==self.campaign.id)
+        self.assertEqual(shared['journal'][0]['person'],'Петри')
+        stranger=User.objects.create_user('stranger')
+        self.client.force_login(stranger)
+        shared=next(c for c in self.client.get('/api/state/').json()['campaigns'] if c['id']==self.campaign.id)
+        self.assertEqual(shared['journal'],[])
+
+    def test_journal_validation(self):
+        self.post(self.alice,{'op':'journal.save','campaign':self.campaign.id,'title':'','steps':[]},400)
+        self.post(self.alice,{'op':'journal.save','campaign':self.campaign.id,'title':'Задание','steps':[{'text':'Этап','done':'yes'}]},400)
+        self.post(self.alice,{'op':'journal.save','campaign':self.campaign.id,'title':'Задание','status':'unknown'},400)
