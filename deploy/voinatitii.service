@@ -1,0 +1,19 @@
+[Unit]
+Description=VoiNaTitii Django application
+After=network.target postgresql.service
+
+[Service]
+User=budimir
+Group=budimir
+WorkingDirectory=/home/budimir/VoiNaTitii
+EnvironmentFile=/etc/voinatitii.env
+ExecStart=/home/budimir/VoiNaTitii/.venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 2 --threads 4 --timeout 60 --access-logfile - --error-logfile -
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
