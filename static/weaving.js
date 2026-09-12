@@ -10,11 +10,11 @@ async function submitAbility(payload){
   const result=await api({...capture.attack,weave:payload});weavingCapture=null;return result;
  }
  if(payload.weave_ability){
-  const spell=current().abilities.find(x=>x.id===payload.weave_ability);
+  const spell=current().abilities.find(x=>x.id===payload.weave_ability),drawCharacter=pendingAbility?._draw_character;
   if(!spell?.weavable)throw Error('Выберите магическое умение');
   return {next:()=>{
    weavingCapture={attack:payload,spell};
-   abilityForm({...spell,_weave:true});
+   abilityForm({...spell,_weave:true,...(drawCharacter?{_draw_character:drawCharacter}:{})});
    el('dialog-submit').textContent='Применить оба';
    const names=payload.targets.length?payload.targets.map(id=>byId(S.characters,id)?.name).join(', '):'цель на игровом поле';
    const intro=document.createElement('div');intro.className='notice';

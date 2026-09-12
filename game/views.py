@@ -762,10 +762,16 @@ def use_ability(user, p, embedded=False):
     a = get_object_or_404(Entry, pk=p['ability'],kind='ability',archived=False)
     if not a.data.get('system') and not c.abilities.filter(pk=a.pk).exists():
         raise PermissionDenied('Персонаж не владеет этим умением')
-    a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)))
     scene = current_scene(c)
     if not scene:
         raise ValueError('Умение можно применить в активном бою')
+    drawn=None
+    if 'draw_weapon' in p:
+        if embedded or p['op']!='ability.use':raise ValueError('Оружие извлекается частью самостоятельной атаки')
+        from . import thrown
+        drawn=Change(user,'',scene)
+        thrown.apply(drawn,c,a,p['draw_weapon'])
+    a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)))
     if p.get('support_minor'):
         variant=stances.minor_attack(c,a)
         if not variant or embedded or p.get('as_reaction'):
@@ -808,6 +814,10 @@ def use_ability(user, p, embedded=False):
     stance=stances.activation(c,a,p) if not aura else None
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.display_name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
+    if drawn:
+        drawn.label=change.label
+        drawn.inputs.update(change.inputs)
+        change=drawn
     if defense:change.inputs['damage_reduction']=defense
     change.effect_targets=pool_targets
     change.watch(c)
@@ -971,3 +981,16 @@ def portrait(request, pk):
     if not c.photo:
         return HttpResponseBadRequest('Нет фотографии')
     return FileResponse(c.photo.open('rb'), content_type='image/jpeg')
+
+
+@login_required
+def thrown_preview(request):
+    from . import thrown
+    try:
+        c=owned(request.user,request.GET.get('character'))
+        if not current_scene(c):raise ValueError('Персонаж должен участвовать в бою')
+        payload={'item':int(request.GET.get('item','')), 'revision':int(request.GET.get('revision','')), 'mode':request.GET.get('mode')}
+        return JsonResponse({'character':serialize_char(thrown.preview(c,payload),request.user)})
+    except Http404:return JsonResponse({'error':'Запись не найдена'},status=404)
+    except PermissionDenied as e:return JsonResponse({'error':str(e)},status=403)
+    except (ValueError,TypeError) as e:return JsonResponse({'error':str(e)},status=400)

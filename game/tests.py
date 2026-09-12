@@ -3446,3 +3446,104 @@ class GameTests(TestCase):
         self.assertFalse(rendered['calc']['unarmed_dice'])
         self.assertFalse(rendered['calc']['ignore_weapon_requirements'])
         self.assertEqual(rendered['calc']['weapon_reach'],0)
+
+    def thrown_setup(self):
+        old=Item.objects.create(character=self.a,name='Меч в руке',equipped=True,data={'item_type':'weapon','dice':'1к12','no_proficiency':True})
+        item=Item.objects.create(character=self.a,name='Дротик из сумки',data={'item_type':'weapon','dice':'1к6','no_proficiency':True,'keywords':['Метательное 5'],'effects':[{'stat':'hit','value':2}]})
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор + Мод','circle':0,'action':'main','target':'single'})
+        scene=self.start();self.a.refresh_from_db()
+        p={'op':'ability.use','character':self.a.pk,'ability':attack.pk,'roll_result':'Попадание 17, урон 4','outcome':'hit','targets':[self.b.pk],
+           'draw_weapon':{'item':item.pk,'revision':item.revision,'mode':'ranged'}}
+        return old,item,attack,scene,p
+
+    def test_thrown_preview_is_read_only_and_matches_attack_and_undo(self):
+        old,item,attack,scene,p=self.thrown_setup()
+        before=Event.objects.count();clock=Clock.objects.get(pk=1).revision
+        self.client.force_login(self.alice)
+        response=self.client.get('/api/thrown-preview/',{'character':self.a.pk,**p['draw_weapon']})
+        self.assertEqual(response.status_code,200,response.content[:300])
+        preview=response.json()['character'];row=next(a for a in preview['abilities'] if a['id']==attack.pk)
+        self.assertEqual(preview['calc']['weapon_id'],item.pk)
+        self.assertIn('1к6',row['formula']);self.assertIn('Дальнобойный 5',row['data']['keywords'])
+        self.assertEqual(row['hit_bonus'],2);self.assertEqual(row['reason'],'')
+        item.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(item.equipped);self.assertEqual(computed(self.a)['weapon_id'],old.pk)
+        self.assertEqual(Event.objects.count(),before);self.assertEqual(Clock.objects.get(pk=1).revision,clock)
+        actions=self.a.runtime['actions'].copy()
+        self.post(self.alice,p)
+        self.a.refresh_from_db();item.refresh_from_db()
+        event=Event.objects.latest('id')
+        self.assertEqual(Event.objects.count(),before+1)
+        self.assertEqual(event.inputs['attack_targets'][0]['damage'],row['formula'])
+        self.assertEqual(event.inputs['attack_targets'][0]['hit'],row['hit_bonus'])
+        self.assertEqual(event.inputs['draw_weapon']['item'],item.pk)
+        self.assertTrue(item.equipped);self.assertEqual(computed(self.a)['weapon_id'],item.pk)
+        self.assertEqual(self.a.runtime['actions'],{**actions,'main':actions['main']-1})
+        self.post(self.alice,{'op':'undo'})
+        self.a.refresh_from_db();item.refresh_from_db()
+        self.assertFalse(item.equipped);self.assertEqual(self.a.runtime['actions'],actions)
+        self.assertEqual(computed(self.a)['weapon_id'],old.pk)
+        self.post(self.alice,{'op':'redo'})
+        self.a.refresh_from_db();item.refresh_from_db()
+        self.assertTrue(item.equipped);self.assertEqual(computed(self.a)['weapon_id'],item.pk)
+
+    def test_thrown_validation_rolls_back_draw_without_spending_actions(self):
+        old,item,attack,scene,p=self.thrown_setup()
+        original=self.a.runtime.copy();before=Event.objects.count()
+        bad=[{**p,'roll_result':''},{**p,'targets':[99999]},
+             {**p,'ability':self.bless.pk},{**p,'op':'aura.set'},
+             {**p,'draw_weapon':{**p['draw_weapon'],'revision':item.revision+1}},
+             {**p,'draw_weapon':{**p['draw_weapon'],'mode':'teleport'}}]
+        for request in bad:
+            self.post(self.alice,request,400)
+            item.refresh_from_db();self.a.refresh_from_db()
+            self.assertFalse(item.equipped);self.assertEqual(self.a.runtime,original)
+            self.assertEqual(Event.objects.count(),before)
+        self.a.runtime['actions']['main']=0;self.a.save()
+        self.post(self.alice,p,400);item.refresh_from_db();self.assertFalse(item.equipped)
+
+    def test_thrown_rejects_ground_empty_foreign_and_nonthrowing_items(self):
+        old,item,attack,scene,p=self.thrown_setup()
+        self.client.force_login(self.bob)
+        self.assertEqual(self.client.get('/api/thrown-preview/',{'character':self.a.pk,**p['draw_weapon']}).status_code,403)
+        for changes,status in [({'data':{**item.data,'on_ground':True}},400),({'quantity':0},404),
+                               ({'data':{**item.data,'keywords':[]}},400),({'equipped':True},400),({'character':self.b},404)]:
+            original={key:getattr(item,key) for key in changes}
+            for key,value in changes.items():setattr(item,key,value)
+            item.save()
+            self.post(self.alice,p,status)
+            for key,value in original.items():setattr(item,key,value)
+            item.save()
+        self.post(self.alice,{**p,'outcome':'miss'})
+        item.refresh_from_db();self.assertTrue(item.equipped)
+        self.assertEqual(Event.objects.latest('id').inputs['attack_targets'][0]['damage'],'0')
+
+    def test_thrown_can_be_drawn_for_melee_weapon_skill(self):
+        old,item,attack,scene,p=self.thrown_setup()
+        skill=Entry.objects.create(kind='ability',name='Колючий удар',data={'weapon':True,'damage':True,'formula':'2Ор','action':'main','circle':1,'requires':['Метательное'],'keywords':['Ближний']})
+        self.a.abilities.add(skill)
+        skill.data['requires']=['Метательное 10'];skill.save()
+        self.post(self.alice,{**p,'ability':skill.pk},400)
+        item.refresh_from_db();self.assertFalse(item.equipped)
+        skill.data['requires']=['Метательное'];skill.save()
+        self.post(self.alice,{**p,'ability':skill.pk,'draw_weapon':{**p['draw_weapon'],'mode':'melee'}})
+        event=Event.objects.latest('id');self.assertIn('2к6',event.inputs['attack_targets'][0]['damage'])
+        self.assertEqual(event.inputs['draw_weapon']['mode'],'melee')
+
+    def test_thrown_draw_and_woven_spell_share_rollback_and_undo(self):
+        old,item,attack,scene,p=self.thrown_setup()
+        spell=Entry.objects.create(kind='ability',name='Вплетённая искра',data={'damage':True,'formula':'1к6','circle':1,'keywords':['Огонь'],'action':'main','target':'single','effects':[{'stat':'temp','value':3}]})
+        self.a.abilities.add(spell);self.a.runtime['mystic_weaving']={'ability':123};self.a.save()
+        child={'ability':spell.pk,'targets':[self.b.pk],'outcome':'hit','roll_result':'4'}
+        before=Event.objects.count()
+        self.post(self.alice,{**p,'weave':{**child,'roll_result':''}},400)
+        item.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(item.equipped);self.assertIn('mystic_weaving',self.a.runtime)
+        self.assertEqual(Event.objects.count(),before)
+        self.post(self.alice,{**p,'weave':child})
+        self.assertEqual(Event.objects.count(),before+1)
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['temp'],3)
+        self.post(self.alice,{'op':'undo'})
+        item.refresh_from_db();self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertFalse(item.equipped);self.assertEqual(self.b.runtime.get('temp',0),0)
+        self.assertIn('mystic_weaving',self.a.runtime);self.assertEqual(computed(self.a)['weapon_id'],old.pk)

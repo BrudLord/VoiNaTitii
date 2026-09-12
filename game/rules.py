@@ -18,7 +18,7 @@ def definition(pk):
 
 def computed(c):
     stats = {k: int(c.stats.get(k, 10)) for k, _ in STATS}
-    equipped = list(c.items.filter(equipped=True,quantity__gt=0,archived=False).order_by('id'))
+    equipped = c._equipped_override if hasattr(c,'_equipped_override') else list(c.items.filter(equipped=True,quantity__gt=0,archived=False).order_by('id'))
     weapons = [i for i in equipped if i.data.get('dice')]
     weapon_id=c.runtime.get('weapon_id',c.info.get('weapon_id'))
     selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
@@ -256,8 +256,9 @@ def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=F
         return 'Нужно оружие в руках'
     if d.get('weapon') and calc.get('needs_reload'):
         return 'Перезарядите оружие'
+    from .weaponry import matches_keyword
     required = d.get('requires', [])
-    if required and not set(required).intersection(calc['keywords']) and not (d.get('weapon') and calc.get('ignore_weapon_requirements')):
+    if required and not any(word in calc['keywords'] or not re.search(r'\d',word) and matches_keyword(word,calc['keywords']) for word in required) and not (d.get('weapon') and calc.get('ignore_weapon_requirements')):
         return 'Нужно подходящее оружие'
     return ''
 
