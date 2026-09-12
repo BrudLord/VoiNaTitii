@@ -9,9 +9,10 @@ def editable_data(entry, data=None):
     from .stances import sphere_profile
     from .defenses import profile as defense_profile
     from .attack_sequences import profile as sequence_profile, standard_count
+    from .rapid_fire import prepares
     profiles={'wide_swing':wide_swing_profile,'unarmed_combat':unarmed_profile,
               'elemental_sphere':sphere_profile,'damage_reduction':defense_profile,'attack_sequence':sequence_profile,
-              'standard_attack_count':standard_count}
+              'standard_attack_count':standard_count,'rapid_fire':prepares}
     for key,resolve in profiles.items():
         if key in result:continue
         if key in entry.data:result[key]=copy.deepcopy(entry.data[key])

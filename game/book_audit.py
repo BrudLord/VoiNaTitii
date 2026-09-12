@@ -138,6 +138,8 @@ def abilities(text):
             data.update(elemental_sphere={'strength':1},manual=False,target='single')
         if clean(m[1])=='Широкий замах':
             data['wide_swing']={'hit':1,'reach':1}
+        if clean(m[1])=='Скорострельность':
+            data.update(rapid_fire=True,manual=False)
         from .attack_sequences import BOOK as SEQUENCES
         if clean(m[1]) in SEQUENCES:
             data['attack_sequence']=dict(SEQUENCES[clean(m[1])])

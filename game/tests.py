@@ -4073,3 +4073,51 @@ class GameTests(TestCase):
         self.assertEqual(next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)['attack_sequence'],{'count':2,'targets':'any'})
         self.a.abilities.remove(passive)
         self.assertIsNone(next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)['attack_sequence'])
+
+    def test_rapid_fire_profile_survives_master_rename_and_explicit_disabling(self):
+        from .rapid_fire import prepares, multiplier, consume
+        from .rules import Change
+        a=Entry.objects.create(kind='ability',name='Скорострельность',data={'category':'active','action':'minor'})
+        self.post(self.gm,{'op':'entry.save','id':a.pk,'kind':'ability','name':'Моя скорострельность','data':{'category':'active','action':'minor'}})
+        a.refresh_from_db();self.assertTrue(prepares(a));self.assertTrue(a.data['rapid_fire'])
+        change=Change(self.alice,'Подготовка');change.watch(self.a)
+        consume(change,self.a,a)
+        attack=Entry(name='Выстрел',data={'weapon':True})
+        self.assertEqual(multiplier(self.a,attack),2);self.assertEqual(multiplier(self.a,a),1)
+        consume(change,self.a,attack);self.assertNotIn('rapid_fire',self.a.runtime)
+        self.assertTrue(change.inputs['rapid_fire']['consumed'])
+        for value in [False,None]:
+            a.data['rapid_fire']=value;self.assertFalse(prepares(a))
+        for value in ['true',2,{}]:
+            self.post(self.gm,{'op':'entry.save','id':a.pk,'kind':'ability','name':a.name,'data':{'rapid_fire':value}},400)
+
+    def test_rapid_fire_doubles_series_once_with_preview_and_undo(self):
+        a,p=self.sequence_setup()
+        rapid=Entry.objects.create(kind='ability',name='Скорострельность',data={'category':'active','action':'minor','circle':0})
+        self.a.abilities.add(rapid)
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':rapid.pk,'targets':[]})
+        self.a.refresh_from_db();self.assertTrue(self.a.runtime['rapid_fire'])
+        p['attacks']*=2
+        preview=self.sequence_preview_request(p,1);self.assertEqual(preview.status_code,200,preview.content[:500])
+        self.a.refresh_from_db();self.assertTrue(self.a.runtime['rapid_fire'])
+        self.post(self.alice,p);self.a.refresh_from_db()
+        self.assertFalse(self.a.runtime.get('rapid_fire'));self.assertEqual(self.a.runtime['used'][str(a.pk)],1)
+        self.assertEqual(len(Event.objects.latest('id').inputs['attack_sequence']['attacks']),4)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertTrue(self.a.runtime['rapid_fire'])
+        self.assertEqual(self.a.runtime['actions']['main'],1)
+
+    def test_rapid_fire_volley_has_two_shots_per_step(self):
+        a,p=self.sequence_setup(attack_sequence={'count':2,'minimum':1,'targets':'any','one_per_step':True})
+        self.a.refresh_from_db();self.a.runtime['rapid_fire']={'ability':99};self.a.save()
+        p['steps']=1
+        self.post(self.alice,p)
+        rows=Event.objects.latest('id').inputs['attack_sequence']['attacks']
+        self.assertEqual(rows[0]['movement'][0]['cells'],1);self.assertFalse(rows[1]['movement'])
+
+    def test_rapid_fire_is_consumed_by_nonattack_ability(self):
+        self.start();self.a.refresh_from_db();self.a.runtime['rapid_fire']={'ability':99};self.a.save()
+        a=Entry.objects.create(kind='ability',name='Подготовка без атаки',data={'category':'active','action':'minor','circle':0})
+        self.a.abilities.add(a)
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':a.pk,'targets':[]})
+        self.a.refresh_from_db();self.assertFalse(self.a.runtime.get('rapid_fire'))
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertTrue(self.a.runtime['rapid_fire'])

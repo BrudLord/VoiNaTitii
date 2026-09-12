@@ -67,11 +67,18 @@ def effective_profile(ability,character):
     versions of the passive never multiply one another.
     """
     existing=profile(ability)
-    if 'attack_sequence' in ability.data or existing is not None:return existing
-    if ability.name!='Стандартная атака' or not ability.data.get('system'):return None
-    count=max((standard_count(a) or 1 for a in character.abilities.all()
-               if not a.archived and a.data.get('category','active')=='passive'),default=1)
-    return {'count':count,'targets':'any'} if count>1 else None
+    if 'attack_sequence' not in ability.data and existing is None and ability.name=='Стандартная атака' and ability.data.get('system'):
+        count=max((standard_count(a) or 1 for a in character.abilities.all()
+                   if not a.archived and a.data.get('category','active')=='passive'),default=1)
+        existing={'count':count,'targets':'any'} if count>1 else None
+    from .rapid_fire import multiplier
+    if multiplier(character,ability)==2 and (ability.data.get('damage') or ability.data.get('weapon')):
+        existing=copy.deepcopy(existing or {'count':1,'targets':'each' if ability.data.get('target')!='single' and not ability.data.get('weapon') else 'any'})
+        existing['count']*=2
+        if 'minimum' in existing:existing['minimum']*=2
+        if existing.get('one_per_step'):existing['attacks_per_step']=2
+        existing['rapid_fire']=True
+    return existing
 
 
 def target_key(row, participants):
@@ -132,7 +139,7 @@ def plan(ability, payload, participants, *, multiplier=1, character=None):
         raise ValueError('Выберите разные цели для каждой атаки')
     if spec.get('one_per_step'):
         distance = payload.get('steps')
-        if type(distance) is not int or not 1 <= distance <= spec['count'] or len(steps) != distance * multiplier:
+        if type(distance) is not int or not 1 <= distance <= spec['count']//spec.get('attacks_per_step',1) or len(steps) != distance * multiplier * spec.get('attacks_per_step',1):
             raise ValueError('Количество выстрелов должно соответствовать пройденным клеткам')
     return {'profile': spec, 'attacks': steps, 'all_missed': all(row['outcome'] == 'miss' for row in steps),
             'successful_targets': list(dict.fromkeys(key for key, row in zip(keys, steps) if row['outcome'] != 'miss'))}
@@ -152,6 +159,9 @@ def move_step(change, character, step, spec, spent, phase):
     from .movement import resolve
     from .rules import computed
     movement = step.get('movement_' + phase)
+    if spec.get('one_per_step') and phase == 'before' and (step['number']-1)%spec.get('attacks_per_step',1):
+        if movement:raise ValueError('Дополнительный выстрел совершается с той же клетки')
+        return spent
     if spec.get('one_per_step') and phase == 'before':
         movement = movement or {'cells': 1, 'cell_cost': 1}
         if not isinstance(movement, dict) or movement.get('cells') != 1:
@@ -196,6 +206,8 @@ def execute(user, payload, character, ability, scene, *, drawn=None, embedded=Fa
     change = drawn or Change(user, ability.display_name + ' · ' + character.name, scene)
     change.label = ability.display_name + ' · ' + character.name
     change.watch(character)
+    from .rapid_fire import consume
+    consume(change,character,ability)
     action = 'reaction' if payload.get('as_reaction') else ability.data.get('action', 'main')
     if not embedded:
         change.action(character, action)

@@ -79,3 +79,7 @@ test('revisiting a drawn attack requests its weapon preview again',async()=>{
  const t=setup(),c={root:{},plan:[{target:2,draw_weapon:{item:6,revision:3,mode:'ranged'}}]};
  await t.ctx.sequencePreview(c,0);assert.equal(t.ctx.request.body.pending_draw.revision,3);
 });
+test('doubled volley skips movement on the second shot of each cell',()=>{
+ const t=setup();t.run("sequenceCapture={index:1,ability:{attack_sequence:{one_per_step:true,attacks_per_step:2,count:4}}}");
+ assert.equal(t.ctx.sequenceMovement({attack_sequence:null}),'');
+});

@@ -95,6 +95,7 @@ def home(request):
 def serialize_char(c, user):
     from .disarm import profile as disarm_profile
     from .attack_sequences import effective_profile as sequence_profile
+    from .rapid_fire import prepares as rapid_prepares
     scene = current_scene(c)
     from .personal_abilities import definition as ability_definition
     abilities = []
@@ -120,7 +121,7 @@ def serialize_char(c, user):
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'definition':definition,'id': a.id, 'name': a.display_name, 'description': a.description, 'data': d,
                           'roll_conditions':targeting.roll_conditions(a,calc),'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
-                          'attack_setup':setup, 'charged_arrows':charged,'damage_reduction':defense,'attack_sequence':sequence_profile(a,c),
+                          'attack_setup':setup, 'charged_arrows':charged,'damage_reduction':defense,'attack_sequence':sequence_profile(a,c),'rapid_fire_prepare':rapid_prepares(a),
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
                           'weavable':weaving.magical(a),'weaving_area':weaving.area(a),
                           'physical_weapon_units':targeting.physical_weapon_units(a,calc),
@@ -444,7 +445,7 @@ def execute(user, p):
             change.watch(c)
             for item in c.items.filter(equipped=True,archived=False):change.depend(item)
             enchantments.start_battle(c,computed(c))
-            c.runtime.pop('elemental_support',None);c.runtime.pop('mystic_weaving',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
+            c.runtime.pop('elemental_support',None);c.runtime.pop('mystic_weaving',None);c.runtime.pop('rapid_fire',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
             c.runtime.pop('exhaustion_transfer',None)
             c.runtime.update(used={}, mystic_arrows=0, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
                              stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
@@ -472,7 +473,7 @@ def execute(user, p):
             for c in chars.values():
                 from .alchemy import end_battle
                 end_battle(change,c)
-                c.runtime.pop('elemental_support',None);c.runtime.pop('mystic_weaving',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
+                c.runtime.pop('elemental_support',None);c.runtime.pop('mystic_weaving',None);c.runtime.pop('rapid_fire',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
                 c.runtime.pop('exhaustion_transfer',None)
                 c.runtime.pop('readied',None);c.runtime.pop('readied_queue',None);c.runtime.pop('initiative_shift',None)
                 c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, mystic_arrows=0, temp=0, stun_pending=0, actions=dict(ACTIONS))
@@ -719,6 +720,9 @@ def validate_entry(d):
     if 'attack_sequence' in d:
         from .attack_sequences import validate_profile
         validate_profile(d['attack_sequence'])
+    if 'rapid_fire' in d:
+        from .rapid_fire import prepares
+        prepares(Entry(name='',data=d))
     if 'standard_attack_count' in d:
         from .attack_sequences import standard_count
         standard_count(Entry(data=d))
@@ -803,7 +807,10 @@ def use_ability(user, p, embedded=False, *, sequence_step=False, preview_steps=N
         if 'attacks' in p and not sequence_step:
             from .attack_sequences import execute as execute_sequence
             return execute_sequence(user,p,c,a,scene,drawn=drawn,embedded=embedded,preview_steps=preview_steps)
-        needs_roll = a.name not in [charged_arrows.NAME,weaving.NAME] and (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
+        from .rapid_fire import multiplier as rapid_multiplier, prepares as rapid_prepares
+        if not sequence_step and rapid_multiplier(c,a)==2 and (d.get('damage') or d.get('weapon')):
+            raise ValueError('Скорострельность: введите броски всех атак серии')
+        needs_roll = not rapid_prepares(a) and a.name not in [charged_arrows.NAME,weaving.NAME] and (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
         if needs_roll and not str(p.get('roll_result', '')).strip():
             raise ValueError('Введите результат физического броска. Действие пока не применено.')
     pool_targets={t.id:t for t in Character.objects.filter(id__in=scene.state['order'])}
@@ -837,6 +844,9 @@ def use_ability(user, p, embedded=False, *, sequence_step=False, preview_steps=N
     if defense:change.inputs['damage_reduction']=defense
     change.effect_targets=pool_targets
     change.watch(c)
+    if not aura and not sequence_step:
+        from .rapid_fire import consume
+        consume(change,c,a)
     if not aura and not embedded and not sequence_step:change.action(c,'reaction' if p.get('as_reaction') else d.get('action','main'))
     if p.get('support_minor'):
         change.label+=' · Малым'
