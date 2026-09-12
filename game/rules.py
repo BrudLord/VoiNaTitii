@@ -295,7 +295,7 @@ class Change:
         if key not in self.objects:
             self.objects[key] = obj
             self.before[key] = copy.deepcopy(item_snapshot(obj) if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime)
-        return obj
+        return self.objects[key]
 
     def action(self, character, action):
         from .periodic import action_performed

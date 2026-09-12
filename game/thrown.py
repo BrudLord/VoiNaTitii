@@ -61,6 +61,10 @@ def release(change,character,ability):
         dropped=new_item(change,character)
         dropped.name=item.name;dropped.entry_id=item.entry_id;dropped.slot=item.slot
         dropped.quantity=1;dropped.data=copy.deepcopy(item.data)
+        # Only the thrown instance fired; reserve copies retain their prior charge.
+        previous=change.before['item:'+str(item.pk)]['data']
+        if 'needs_reload' in previous:item.data['needs_reload']=previous['needs_reload']
+        else:item.data.pop('needs_reload',None)
     dropped.data={**dropped.data,'on_ground':True}
     character.runtime['weapon_id']=0
     change.inputs['thrown_weapon']={'item':dropped.pk,'name':dropped.name,'quantity':1,'remaining':item.quantity if dropped is not item else 0}
