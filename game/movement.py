@@ -22,3 +22,10 @@ def apply(user,p):
                   inputs={'movement':{'mode':mode,'cells':cells,'cell_cost':cost,'limit':limit,'provokes':mode!='step'}})
     change.watch(c);change.action(c,'move');c.runtime['actions']['move']-=1
     change.finish()
+
+
+def forced(c,cells):
+    calc=computed(c)
+    if any(status_name(e)=='Обездвижен' for e in calc['effects']):
+        return {'cells':0,'blocked':'Обездвижен'}
+    return {'cells':max(0,cells-calc['forced_movement_reduction'])}

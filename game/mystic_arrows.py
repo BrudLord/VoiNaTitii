@@ -73,8 +73,9 @@ def apply(change, character, targets, choices, payload, *, count_use=True, log_k
     for target in targets:
         for option in choices:
             if option.get('movement'):
-                amount=max(0,option['movement']-computed(target)['forced_movement_reduction'])
-                change.inputs[log_key].setdefault('movements',[]).append({'target':target.name,'cells':amount})
+                from .movement import forced
+                change.depend(target)
+                change.inputs[log_key].setdefault('movements',[]).append({'target':target.name,**forced(target,option['movement'])})
             if 'effect' not in option:continue
             effect=option['effect']
             apply_status(change.watch(target),{**effect,'key':'status:'+effect['status'],'name':effect['status'],

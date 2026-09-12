@@ -2998,3 +2998,26 @@ class GameTests(TestCase):
         row=next(row for row in serialize_char(self.a,self.alice)['abilities'] if row['id']==a.pk)
         self.assertFalse(row['rolls_required'])
         self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':a.pk,'targets':[],'outcome':'hit'})
+
+    def test_force_arrow_cannot_shift_an_immobilized_target(self):
+        scene,p,_,_=self.mystic_setup()
+        self.b.runtime['effects']=[{'key':'bind','name':'Обездвижен','status':'Обездвижен','stat':'status','value':1,'duration':'turns','remaining':1}];self.b.save()
+        self.post(self.alice,{**p,'mystic_arrows':['shift']});self.b.refresh_from_db();self.a.refresh_from_db()
+        row=Event.objects.latest('id').inputs['mystic_arrows']['movements'][0]
+        self.assertEqual(row,{'target':self.b.name,'cells':0,'blocked':'Обездвижен'})
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,{'op':'redo'});self.assertTrue(Event.objects.latest('id').inputs['mystic_arrows']['movements'][0]['blocked'])
+
+    def test_forced_movement_uses_current_effect_order_and_recovers_after_binding_ends(self):
+        from .mystic_arrows import apply,OPTIONS
+        from .rules import Change
+        from .movement import forced
+        scene=self.start();self.b.refresh_from_db()
+        bind=next(o for o in OPTIONS if o['id']=='bind');shift=next(o for o in OPTIONS if o['id']=='shift')
+        change=Change(self.alice,'Порядок стрел',scene)
+        apply(change,self.a,[self.b],[bind,shift],{'outcome':'hit'});change.finish()
+        self.assertEqual(change.inputs['mystic_arrows']['movements'][0]['cells'],0)
+        self.assertEqual(forced(self.b,5)['blocked'],'Обездвижен')
+        self.turn(scene,self.alice);self.turn(scene,self.bob);self.b.refresh_from_db()
+        self.assertEqual(forced(self.b,5),{'cells':5})

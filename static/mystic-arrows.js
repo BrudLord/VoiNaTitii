@@ -13,7 +13,7 @@ function updateAttackPreview(){
 }
 function mysticArrowLog(value){
  if(!value)return '';
- return `<br>${esc(value.hit?value.choices.map(o=>o.description).join('; '):'Промах: эффекты стрелы не наложены.')}${(value.movements||[]).map(m=>'<br>'+esc(m.target+': сдвиг на '+m.cells+' клеток с учётом сопротивления перемещению.')).join('')}${value.external_target&&value.hit?' · цель на игровом поле':''}${value.penalty_added?'<br>Истощение маны: ещё −1 до конца боя.':''}`;
+ return `<br>${esc(value.hit?value.choices.map(o=>o.movement&&value.movements?.length?o.name:o.description).join('; '):'Промах: эффекты стрелы не наложены.')}${(value.movements||[]).map(m=>'<br>'+esc(m.target+(m.blocked?': сдвиг невозможен — '+m.blocked:': сдвиг на '+m.cells+' клеток с учётом сопротивления перемещению.'))).join('')}${value.external_target&&value.hit?' · цель на игровом поле':''}${value.penalty_added?'<br>Истощение маны: ещё −1 до конца боя.':''}`;
 }
 document.addEventListener('change',event=>{
  if(event.target.name==='outcome')updateAttackPreview();
