@@ -28,6 +28,18 @@ def hit_bonus(character, ability, calc):
     return value
 
 
+def advantage(effects,ability,calc):
+    from .statuses import status_name
+    candidates=[{**e,'stat':'target_hit'} for e in effects if status_name(e) in ['БП','Шок']]
+    return max((enchantments.ability_bonus({**calc,'effects':[e]},ability,'target_hit') for e in candidates),default=0,)
+
+
+def target_hit_bonus(effects,ability,calc):
+    from .statuses import status_name
+    other=[e for e in effects if status_name(e) not in ['БП','Шок']]
+    return max(0,advantage(effects,ability,calc))+enchantments.ability_bonus({**calc,'effects':other},ability,'target_hit')
+
+
 def resolve(character,ability,calc,targets,payload):
     if not (ability.data.get('damage') or ability.data.get('weapon')):return []
     conductor=payload.get('external_conductor',0)
@@ -52,12 +64,12 @@ def resolve(character,ability,calc,targets,payload):
     result=[]
     for target in targets or [None]:
         effects=computed(target)['effects'] if target else []
-        bp=max((max(0,e.get('value',0)) for e in effects if status_name(e)=='БП'),default=0) if target else payload.get('external_bp',0)
+        bp=max(0,advantage(effects,ability,calc)) if target else payload.get('external_bp',0)
         extra=bp if ability.data.get('damage_from_bp') else 0
         strength=max((abs(e.get('value',0)) for e in effects if status_name(e)=='Сверхпроводник'),default=0) if target else conductor
         conductor_bonus=strength*physical_weapon_units(ability,calc)/2
         damage=formula(character,ability,payload.get('outcome')=='critical',calc)
-        bonus=enchantments.ability_bonus({**calc,'effects':effects},ability,'target_hit') if target else external
+        bonus=target_hit_bonus(effects,ability,calc) if target else external
         result.append({'id':target.pk if target else None,'name':target.name if target else 'Цель на игровом поле',
                        'hit':base+bonus,'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
                        'damage':damage+(f' +{extra} [БП]' if extra else '')+(f' +{conductor_bonus:g} [Сверхпроводник]' if conductor_bonus else ''),

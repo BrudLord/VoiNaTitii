@@ -2694,3 +2694,30 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'action.move','character':self.a.pk,'mode':'walk','cells':6,'cell_cost':1})
         self.assertEqual([e['damage'] for e in Event.objects.latest('id').inputs['periodic_damage']],[5])
         self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],10)
+
+    def test_shock_grants_advantage_without_stacking_with_smaller_bp(self):
+        from .targeting import resolve
+        ability=Entry(name='Удар',data={'damage':True,'formula':'1к6','damage_from_bp':True,'keywords':['Ближний']})
+        self.b.runtime['effects']=[{'key':'shock','status':'Шок','stat':'status','value':3},{'key':'bp','status':'БП','stat':'target_hit','value':2},{'key':'bonus','name':'Иной бонус','stat':'target_hit','value':1}]
+        row=resolve(self.a,ability,computed(self.a),[self.b],{})[0]
+        self.assertEqual((row['target_bonus'],row['bp_damage']),(4,3))
+        self.assertIn('+3 [БП]',row['damage'])
+        self.b.runtime['effects'][1]['value']=5
+        row=resolve(self.a,ability,computed(self.a),[self.b],{})[0]
+        self.assertEqual((row['target_bonus'],row['bp_damage']),(6,5))
+
+    def test_advantage_keyword_scope_applies_to_hit_and_damage_together(self):
+        from .targeting import resolve
+        ability=Entry(name='Заклинание',data={'damage':True,'formula':'1к6','damage_from_bp':True,'keywords':['Дальнобойный 5']})
+        self.b.runtime['effects']=[{'key':'bp','status':'БП','stat':'target_hit','value':4,'keyword':'Ближний'},{'key':'shock','status':'Шок','stat':'status','value':2}]
+        row=resolve(self.a,ability,computed(self.a),[self.b],{})[0]
+        self.assertEqual((row['target_bonus'],row['bp_damage']),(2,2))
+
+    def test_shock_bonus_is_removed_by_reaction_and_restored_by_undo(self):
+        from .targeting import resolve
+        self.start();self.b.refresh_from_db();self.b.runtime['effects']=[{'key':'shock','name':'Шок','stat':'status','value':3,'duration':'turns','remaining':3}];self.b.save()
+        a=Entry(name='Удар',data={'damage':True,'formula':'1к6'})
+        self.assertEqual(resolve(self.a,a,computed(self.a),[self.b],{})[0]['target_bonus'],3)
+        self.post(self.gm,{'op':'effect.apply','character':self.b.pk,'name':'Кислота','value':2,'reaction':'shock'})
+        self.b.refresh_from_db();self.assertEqual(resolve(self.a,a,computed(self.a),[self.b],{})[0]['target_bonus'],0)
+        self.post(self.gm,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(resolve(self.a,a,computed(self.a),[self.b],{})[0]['target_bonus'],3)

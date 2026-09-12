@@ -7,15 +7,16 @@ function updateExternalTarget(){
  const old=formObject().external_bp||0,prone=!!formObject().external_prone,conductor=formObject().external_conductor||0;
  box.innerHTML=checks('targets').length?'':input('external_bp','БП противника на поле',old,'number','min="0" max="1000" step="1"')+(pendingAbility?.physical_weapon_units?input('external_conductor','Сверхпроводник на противнике',conductor,'number','min="0" max="1000" step="1"'):'')+`<label><input type="checkbox" name="external_prone" ${prone?'checked':''}> Противник сбит с ног</label>`;
 }
-function targetHitBonus(a,target){
+function scopedTargetEffects(a,target){
  const base=w=>String(w).replace(/\s+\d+(?:\s+в\s+\d+)?$/,'').trim();
- const scope=a.hit_scope;
- return (target.calc.effects||[]).filter(e=>e.stat==='target_hit'&&(!e.ability_scope||e.ability_scope===scope)&&(!e.keyword||(a.data.keywords||[]).some(w=>base(w)===base(e.keyword)))).reduce((n,e)=>n+e.value,0);
+ return (target.calc.effects||[]).filter(e=>(!e.ability_scope||e.ability_scope===a.hit_scope)&&(!e.keyword||(a.data.keywords||[]).some(w=>base(w)===base(e.keyword))));
 }
+function targetAdvantage(a,target){return Math.max(0,...scopedTargetEffects(a,target).filter(e=>['БП','Шок'].includes(reactionStatus(e))).map(e=>e.value))}
+function targetHitBonus(a,target){return targetAdvantage(a,target)+scopedTargetEffects(a,target).filter(e=>e.stat==='target_hit'&&!['БП','Шок'].includes(reactionStatus(e))).reduce((n,e)=>n+e.value,0)}
 function targetDamageFormula(a,target){
  const critical=formObject().outcome==='critical';
  let result=critical?a.critical:a.formula;
- const bp=target?Math.max(0,...(target.calc.effects||[]).filter(e=>(e.status||e.name)==='БП'&&e.stat==='target_hit').map(e=>e.value)):Number(formObject().external_bp||0);
+ const bp=target?targetAdvantage(a,target):Number(formObject().external_bp||0);
  const strength=target?Math.max(0,...(target.calc.effects||[]).filter(e=>(e.status||e.name)==='Сверхпроводник').map(e=>Math.abs(e.value))):Number(formObject().external_conductor||0);
  const conductor=strength*(a.physical_weapon_units||0)/2;
  if(conductor)result+=' +'+conductor+' [Сверхпроводник]';

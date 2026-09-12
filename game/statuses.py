@@ -79,6 +79,7 @@ def apply_status(target, incoming, choice=None, *, change=None, roll=None):
     elif name:
         incoming['key']='status:'+name
         incoming['status']=name
+        if name=='Шок':incoming['note']=f'Предоставляет БП {incoming["value"]}; не может окружать.'
     if status_name(incoming) in STUN:
         old=next((e for e in target.runtime.get('effects',[]) if status_name(e)==status_name(incoming)),None)
         if old:
