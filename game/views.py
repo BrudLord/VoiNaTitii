@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows, charged_arrows
+from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows, charged_arrows, targeting
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token, reflex_eligible
 from .alignment import schema as alignment_schema, validate_alignment
@@ -108,12 +108,11 @@ def serialize_char(c, user):
         d['keywords']=weaponry.keywords(a,calc)
         if d.get('weapon'):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
-        hit_bonus = enchantments.ability_bonus(calc,a,'hit') + sum(p.get('hit',0) for p in enchantments.for_ability(calc,a)) + (calc['weapon_hit'] if d.get('weapon') else 0)
-        if d.get('system') and any(x.name=='Мистическая точность' for x in learned.values()):
-            hit_bonus += calc['mods'][calc['primary']]
+        hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
                           'mystic_arrows':mystic_arrows.profile(c,a,calc),
                           'attack_setup':setup, 'charged_arrows':charged,
+                          'hit_scope':'weapon' if d.get('weapon') else 'focus' if enchantments.for_ability({**calc,'enchantments':[{'scope':'focus'}]},a) else '',
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
@@ -646,7 +645,7 @@ def validate_entry(d):
     if not isinstance(d.get('effects', []), list):
         raise ValueError('Эффекты должны быть списком')
     for e in d.get('effects', []):
-        if not isinstance(e, dict) or e.get('stat') not in ['hp', 'temp', 'hit', 'damage', 'ac', 'speed', 'max_hp', 'status'] + [k for k, _ in STATS]:
+        if not isinstance(e, dict) or e.get('stat') not in ['hp', 'temp', 'hit', 'damage', 'ac', 'speed', 'max_hp', 'status', 'target_hit'] + [k for k, _ in STATS]:
             raise ValueError('Некорректный эффект')
         if type(e.get('value', 0)) is not int or type(e.get('turns', 3)) is not int:
             raise ValueError('Величина и длительность эффекта должны быть целыми числами')
@@ -693,6 +692,7 @@ def use_ability(user, p):
         raise ValueError('Выберите цель')
     if d.get('target') == 'single' and len(ids) > 1:
         raise ValueError('Выберите одну цель')
+    attack_targets=targeting.resolve(c,a,computed(c),[pool_targets[pk] for pk in ids],p) if not aura else []
     seeking_arrows.validate(c,a,p,ids)
     arrows=mystic_arrows.resolve(c,a,computed(c),p) if not aura else []
     charged=charged_arrows.resolve(c,a,p,ids) if not aura else None
@@ -700,6 +700,9 @@ def use_ability(user, p):
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
+    if attack_targets:
+        change.inputs['attack_targets']=attack_targets
+        for pk in ids:change.depend(pool_targets[pk])
     if not ids and not aura and p.get('outcome')!='miss' and d.get('effects'):
         change.inputs['external_effects']=[e for e in d['effects'] if not e.get('manual')]
     for item in c.items.filter(equipped=True,archived=False):change.depend(item)

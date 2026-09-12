@@ -1661,3 +1661,74 @@ class GameTests(TestCase):
         heal=Entry.objects.create(kind='ability',name='Лечение',data={'effects':[{'stat':'hp','value':5}]})
         self.a.abilities.add(heal)
         self.post(self.alice,{**payload,'ability':heal.id},400)
+
+    def bp_setup(self):
+        desc,data,source=self.book_row('Фокусирующий удар')
+        grant=Entry.objects.create(kind='ability',name='Фокусирующий удар',description=desc,data=data)
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор + Мод'})
+        Item.objects.create(character=self.a,name='Меч для БП',equipped=True,data={'item_type':'weapon','dice':'1к6','no_proficiency':True})
+        self.a.abilities.add(grant);self.a.level=8;self.a.save();scene=self.start()
+        payload={'op':'ability.use','character':self.a.id,'ability':grant.id,'targets':[self.b.id],'roll_result':'Попадание 15, урон 4'}
+        return scene,attack,payload
+
+    def test_bp_is_applied_after_attack_and_only_affects_attacks_against_its_target(self):
+        from .views import serialize_char
+        scene,attack,p=self.bp_setup();self.post(self.alice,p)
+        self.assertEqual(Event.objects.latest('id').inputs['attack_targets'][0]['target_bonus'],0)
+        self.b.refresh_from_db();bp=next(e for e in self.b.runtime['effects'] if e['name']=='БП')
+        self.assertEqual((bp['value'],bp['remaining']),(2,1))
+        self.assertEqual(computed(self.b)['hit'],0)
+        self.a.refresh_from_db();self.a.runtime['actions']['main']=1;self.a.save()
+        base=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.id)['hit_bonus']
+        self.post(self.alice,{**p,'ability':attack.id,'targets':[self.a.id,self.b.id]})
+        rows=Event.objects.latest('id').inputs['attack_targets']
+        self.assertEqual([r['hit'] for r in rows],[base,base+2])
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db()
+        self.assertTrue(any(e['name']=='БП' for e in self.b.runtime['effects']))
+
+    def test_bp_expires_at_end_of_target_turn_and_turn_undo_restores_it(self):
+        scene,attack,p=self.bp_setup();self.post(self.alice,p)
+        self.turn(scene,self.alice);self.b.refresh_from_db()
+        self.assertTrue(any(e['name']=='БП' for e in self.b.runtime['effects']))
+        self.turn(scene,self.bob);self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+        self.post(self.bob,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],2)
+
+    def test_external_bp_is_validated_and_cannot_override_tracked_targets(self):
+        scene,attack,p=self.bp_setup()
+        payload={**p,'ability':attack.id,'targets':[],'external_bp':3}
+        for value in [-1,1001,1.5,'3',True]:self.post(self.alice,{**payload,'external_bp':value},400)
+        self.post(self.alice,{**payload,'targets':[self.b.id]},400)
+        self.post(self.alice,payload)
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertEqual(row['target_bonus'],3);self.assertIsNone(row['id'])
+        for c in [self.a,self.b]:c.refresh_from_db();self.assertEqual(c.runtime['effects'],[])
+
+    def test_target_bonuses_respect_ability_keywords_and_bp_does_not_stack(self):
+        from .targeting import resolve
+        from .statuses import apply_status
+        scene,attack,p=self.bp_setup()
+        self.b.runtime['effects']=[]
+        apply_status(self.b,{'name':'БП','stat':'target_hit','value':3,'duration':'turns','remaining':1})
+        apply_status(self.b,{'name':'БП','stat':'target_hit','value':2,'duration':'turns','remaining':3})
+        self.assertEqual((self.b.runtime['effects'][0]['value'],self.b.runtime['effects'][0]['remaining']),(3,3))
+        self.b.runtime['effects'].append({'key':'fire','name':'Уязвимое пламя','stat':'target_hit','value':4,'keyword':'Огонь'})
+        self.assertEqual(resolve(self.a,attack,computed(self.a),[self.b],{})[0]['target_bonus'],3)
+        attack.data['keywords']=['Огонь']
+        self.assertEqual(resolve(self.a,attack,computed(self.a),[self.b],{})[0]['target_bonus'],7)
+
+    def test_master_can_edit_bp_effect_and_cast_miss_does_not_apply_it(self):
+        scene,attack,p=self.bp_setup()
+        self.post(self.gm,{'op':'effect.apply','character':self.b.id,'name':'БП','value':2,'turns':1})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['stat'],'target_hit')
+        self.post(self.gm,{'op':'undo'})
+        self.post(self.alice,{**p,'outcome':'miss'})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_used_target_bonus_cannot_be_undone_until_dependent_attack_is_undone(self):
+        scene,attack,p=self.bp_setup()
+        self.post(self.gm,{'op':'effect.apply','character':self.b.id,'name':'БП','value':2,'turns':1})
+        self.post(self.alice,{**p,'ability':attack.id})
+        self.post(self.gm,{'op':'undo'},400)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.gm,{'op':'undo'})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
