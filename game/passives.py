@@ -24,3 +24,19 @@ def boulder_bonus(character, ability, calc, scene):
     if stun:
         result.append({'key':'boulder_stun','value':stun,'type':'Земля','name':'Глыба · Оглушение','once_per_turn':False})
     return result
+
+
+def lightning_reflexes(character):
+    return any(a.name=='Молниеносные рефлексы' and not a.archived for a in character.abilities.all())
+
+
+def reflex_eligible(character,ability):
+    d=ability.data
+    return lightning_reflexes(character) and not ability.archived and d.get('category','active')=='active' and not d.get('system') and int(d.get('circle',0))==0 and d.get('action','main')!='reaction'
+
+
+def reflex_reason(character,ability,scene):
+    if not reflex_eligible(character,ability):return 'Нужно изучить Молниеносные рефлексы и выбрать неограниченное умение'
+    if scene and character.runtime.get('once_per_turn',{}).get('lightning_reflexes')==turn_token(scene):
+        return 'Молниеносные рефлексы уже использованы на этом ходу'
+    return ''

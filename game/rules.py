@@ -25,6 +25,7 @@ def computed(c):
     from .enchantments import equipment
     enchantments, focus_id = equipment(c, equipped, selected)
     from .weaponry import upgrades
+    from .passives import lightning_reflexes
     weapon_upgrades=upgrades(selected) if selected else []
     effects = list(c.runtime.get('effects', []))
     if selected and selected.data.get('accuracy_oil'):
@@ -104,7 +105,7 @@ def computed(c):
             'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
             'step':int(rd.get('step',1)),'resistance':int(rd.get('resistance',0)),
             'skills':skill_values(c,mods,klass),'effects':effects,
-            'keywords': keywords, 'reactions': max(1, mods['wis']), 'orc': bool(rd.get('orc'))}
+            'keywords': keywords, 'reactions': max(1, mods['wis'])*(2 if lightning_reflexes(c) else 1), 'orc': bool(rd.get('orc'))}
 
 
 def skill_values(c, mods, klass=None):
@@ -167,7 +168,7 @@ def current_scene(c):
     return None
 
 
-def availability(c, ability, scene=None, calc=None, readied=False):
+def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=False):
     calc = calc or computed(c)
     d = ability.data
     category = d.get('category', 'active')
@@ -182,6 +183,12 @@ def availability(c, ability, scene=None, calc=None, readied=False):
     if statuses.intersection({'Сон','Страх'}):
         return 'Персонаж пропускает ход: '+', '.join(statuses.intersection({'Сон','Страх'}))
     action = d.get('action', 'main')
+    if as_reaction:
+        from .passives import reflex_reason
+        blocked=reflex_reason(c,ability,scene)
+        if blocked:return blocked
+        if readied:return 'Отложенное действие нельзя одновременно применять через рефлексы'
+        action='reaction'
     if readied:
         from .readied import reason
         blocked=reason(c,scene,action,readied if isinstance(readied,str) else None)

@@ -5,7 +5,7 @@ import json
 import uuid
 from . import enchantments, roll_pools, knowledge, weaponry, crafting
 from .models import JournalEntry
-from .passives import boulder_bonus, turn_token
+from .passives import boulder_bonus, turn_token, reflex_eligible
 from .alignment import schema as alignment_schema, validate_alignment
 
 from PIL import Image, ImageOps
@@ -99,7 +99,7 @@ def serialize_char(c, user):
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
         d = copy.deepcopy(a.data)
-        if roll_pools.profile(a) or crafting.profile(a):d['manual']=False
+        if roll_pools.profile(a) or crafting.profile(a) or a.name=='Молниеносные рефлексы':d['manual']=False
         d['keywords']=weaponry.keywords(a,calc)
         if d.get('weapon'):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
@@ -110,6 +110,7 @@ def serialize_char(c, user):
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
+                          'reflex_reason':availability(c,a,scene,calc,as_reaction=True) if reflex_eligible(c,a) else None,
                           'ready_reason':availability(c,a,scene,calc,readied=True),
                           'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, not bool(roll_pools.profile(a)), calc,scene=scene),
                           'damage_contributions':boulder_bonus(c,a,calc,scene),
@@ -654,10 +655,12 @@ def use_ability(user, p):
         raise ValueError('Умение можно применить в активном бою')
     d = a.data
     aura = p['op'] == 'aura.set'
+    if p.get('as_reaction') and (aura or p.get('use_ready')):
+        raise ValueError('Выберите один способ применения умения')
     if aura and not d.get('aura'):
         raise ValueError('Это не аура')
     if not aura:
-        reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False)
+        reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False,as_reaction=bool(p.get('as_reaction')))
         if reason:
             raise ValueError(reason)
         needs_roll = (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
@@ -694,7 +697,11 @@ def use_ability(user, p):
             if contribution.get('once_per_turn'):
                 c.runtime.setdefault('once_per_turn',{})[contribution['key']]=turn_token(scene)
     if not aura:
-        act = d.get('action', 'main')
+        act = 'reaction' if p.get('as_reaction') else d.get('action', 'main')
+        if p.get('as_reaction'):
+            c.runtime.setdefault('once_per_turn',{})['lightning_reflexes']=turn_token(scene)
+            change.label='Молниеносные рефлексы · '+change.label
+            change.inputs['as_reaction']=True
         if act != 'free' and not p.get('use_ready'):
             c.runtime['actions'][act] -= 1
         if not (p.get('outcome') == 'miss' and d.get('reliable')):

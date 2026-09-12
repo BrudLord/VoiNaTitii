@@ -1059,3 +1059,51 @@ class GameTests(TestCase):
         self.bless.description='Изменённое описание';self.bless.save()
         updated=self.client.get('/api/state/',{'catalog_revision':first['catalog_revision']}).json()
         self.assertIn('catalog',updated);self.assertNotEqual(first['catalog_revision'],updated['catalog_revision'])
+
+    def test_lightning_reflexes_doubles_reactions_and_refreshes_each_round(self):
+        reflex=Entry.objects.create(kind='ability',name='Молниеносные рефлексы',data={'category':'passive','circle':3})
+        self.a.abilities.add(reflex)
+        self.assertEqual(computed(self.a)['reactions'],2)
+        self.a.stats['wis']=16;self.a.save();self.assertEqual(computed(self.a)['reactions'],6)
+        scene=self.start();self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['reaction'],6)
+        self.turn(scene,self.alice);self.turn(scene,self.bob);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['reaction'],6)
+        reflex.archived=True;reflex.save();self.assertEqual(computed(self.a)['reactions'],3)
+
+    def test_lightning_reflexes_at_will_reaction_once_per_turn_and_undo(self):
+        reflex=Entry.objects.create(kind='ability',name='Молниеносные рефлексы',data={'category':'passive'})
+        attack=Entry.objects.create(kind='ability',name='Неограниченная искра',data={'circle':0,'damage':True,'formula':'1к6','rolls':True})
+        self.a.abilities.add(reflex,attack)
+        third=Character.objects.create(owner=self.bob,name='В',runtime=fresh())
+        Membership.objects.create(character=third,campaign=self.campaign,squad=self.squad);self.session.characters.add(third)
+        scene=self.start()
+        p={'op':'ability.use','character':self.a.id,'ability':attack.id,'as_reaction':True,'outcome':'hit','roll_result':'4'}
+        self.post(self.alice,p,400)
+        self.turn(scene,self.alice)
+        self.post(self.alice,{**p,'roll_result':''},400)
+        self.post(self.alice,p);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['reaction'],1);self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,p,400)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['reaction'],2)
+        self.assertNotIn('lightning_reflexes',self.a.runtime.get('once_per_turn',{}))
+        self.post(self.alice,{'op':'redo'});self.post(self.alice,p,400)
+        self.turn(scene,self.bob);self.post(self.alice,{**p,'outcome':'miss'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['reaction'],0)
+        self.assertIn('Молниеносные рефлексы',Event.objects.latest('id').label)
+        self.post(self.alice,p,400)
+
+    def test_lightning_reflexes_requires_learned_passive_and_at_will_ability(self):
+        from .views import serialize_char
+        attack=Entry.objects.create(kind='ability',name='Искра',data={'circle':0})
+        self.a.abilities.add(attack);scene=self.start();self.turn(scene,self.alice)
+        p={'op':'ability.use','character':self.a.id,'ability':attack.id,'as_reaction':True,'outcome':'hit'}
+        self.post(self.alice,p,400)
+        reflex=Entry.objects.create(kind='ability',name='Молниеносные рефлексы',data={'category':'passive'})
+        self.a.abilities.add(reflex)
+        self.post(self.alice,{**p,'ability':self.bless.id,'targets':[self.b.id]},400)
+        self.post(self.alice,{**p,'use_ready':True},400)
+        self.post(self.bob,p,403)
+        self.a.refresh_from_db()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.id)
+        self.assertEqual(row['reflex_reason'],'');self.assertEqual(row['reason'],'Ход другого персонажа')
+        reflex.archived=True;reflex.save();self.post(self.alice,p,400)
