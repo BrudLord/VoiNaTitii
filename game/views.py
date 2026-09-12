@@ -913,6 +913,9 @@ def use_ability(user, p, embedded=False):
     if p.get('use_ready') and not aura:
         from .readied import resolve
         resolve(change,c,scene,p,d.get('action','main'))
+    if not aura:
+        from . import thrown
+        thrown.release(change,c,a)
     if embedded:return change
     if weave and weave.get('child'):
         change.finish(defer_record=True)

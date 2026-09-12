@@ -45,3 +45,12 @@ test('temporary weapon calculations belong only to the attack dialog',()=>{
  context.dialog.open=false;context.openAbilityForm=()=>{throw Error('Ошибка формы')};
  assert.throws(()=>context.abilityForm({_draw_character:draft}),/Ошибка формы/);assert.equal(vm.runInContext('current().calc.weapon_id',context),0);
 });
+
+test('throwing preview explains the item movement but melee and magic leave gear alone',()=>{
+ const {context,state,item}=setup();state.character.calc={weapon_id:2};
+ const a={data:{weapon:true,keywords:['Дальнобойный 5','Метательное']}};
+ assert.match(context.thrownWeaponNotice(a,state.character),/Кинжал × 1 — на поле/);
+ a.data.keywords=['Ближний'];assert.equal(context.thrownWeaponNotice(a,state.character),'');
+ a.data.keywords=['Метательное'];a.data.weapon=false;assert.equal(context.thrownWeaponNotice(a,state.character),'');
+ assert.match(context.thrownWeaponLog({name:'Кинжал',quantity:1,remaining:2}),/На поле: Кинжал × 1 · в сумке осталось 2/);
+});

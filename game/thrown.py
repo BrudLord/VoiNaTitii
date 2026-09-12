@@ -41,3 +41,26 @@ def apply(change,character,ability,payload):
     item.save(update_fields=['equipped'])
     character.runtime.update(weapon_id=item.pk,attack_mode=payload['mode'])
     change.inputs['draw_weapon']={'item':item.pk,'name':item.name,'mode':payload['mode']}
+
+
+def release(change,character,ability):
+    """A physical throw moves one item to the field, even on a miss."""
+    from .rules import computed
+    from .weaponry import keywords
+    calc=computed(character)
+    if not ability.data.get('weapon') or not calc['weapon_id'] or not any(re.fullmatch(r'Метательное(?: \d+)?',word) for word in keywords(ability,calc)):
+        return
+    item=change.objects.get('item:'+str(calc['weapon_id']))
+    if item is None:item=change.watch(character.items.get(pk=calc['weapon_id'],equipped=True,archived=False,quantity__gt=0))
+    change.watch(character)
+    item.equipped=False
+    dropped=item
+    if item.quantity>1:
+        from .inventory import new_item
+        item.quantity-=1
+        dropped=new_item(change,character)
+        dropped.name=item.name;dropped.entry_id=item.entry_id;dropped.slot=item.slot
+        dropped.quantity=1;dropped.data=copy.deepcopy(item.data)
+    dropped.data={**dropped.data,'on_ground':True}
+    character.runtime['weapon_id']=0
+    change.inputs['thrown_weapon']={'item':dropped.pk,'name':dropped.name,'quantity':1,'remaining':item.quantity if dropped is not item else 0}

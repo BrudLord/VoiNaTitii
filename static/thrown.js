@@ -26,3 +26,6 @@ function drawAttackStart(id,variant){
 function drawWeaponLog(value){return value?'<br>'+esc('Достал '+value.name+' частью атаки'):''}
 
 document.addEventListener('input',e=>{if(e.target.id==='draw-attack-search'){const query=e.target.value.toLowerCase().trim();dialogBody.querySelectorAll('[data-attack-name]').forEach(row=>{row.hidden=!row.dataset.attackName.includes(query)})}});
+
+function thrownWeaponNotice(a,c){if(!a.data.weapon||!c.calc.weapon_id||!a.data.keywords?.some(k=>/^Метательное(?: \d+)?$/.test(k)))return '';const item=byId(c.items,c.calc.weapon_id);return item?'<p class="muted">'+esc('После броска: '+item.name+' × 1 — на поле.')+'</p>':''}
+function thrownWeaponLog(value){return value?'<br>'+esc('На поле: '+value.name+' × '+value.quantity+(value.remaining?' · в сумке осталось '+value.remaining:'')):''}
