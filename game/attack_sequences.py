@@ -155,7 +155,7 @@ def move_step(change, character, step, spec, spent, phase):
     return spent + result['cells']
 
 
-def execute(user, payload, character, ability, scene, *, drawn=None, embedded=False):
+def execute(user, payload, character, ability, scene, *, drawn=None, embedded=False, preview_steps=None):
     """Execute a validated sequence inside the action endpoint's transaction.
 
     Intermediate changes are persisted for the next attack's calculations but
@@ -167,6 +167,8 @@ def execute(user, payload, character, ability, scene, *, drawn=None, embedded=Fa
     if payload.get('op') != 'ability.use' or not (ability.data.get('damage') or ability.data.get('weapon')):
         raise ValueError('Последовательность должна состоять из атак')
     ordered = plan(ability, payload, set(scene.state['order']))
+    if preview_steps is not None and (type(preview_steps) is not int or not 0 <= preview_steps <= len(ordered['attacks'])):
+        raise ValueError('Некорректный номер атаки для предварительного расчёта')
     for step in ordered['attacks']:
         if set(step) - STEP_FIELDS:
             raise ValueError('В атаке серии есть неподдерживаемые параметры')
@@ -192,7 +194,8 @@ def execute(user, payload, character, ability, scene, *, drawn=None, embedded=Fa
     charged = copy.deepcopy(character.runtime.get('charged_arrows'))
     change.finish(defer_record=True)
     moved = 0
-    for index, step in enumerate(ordered['attacks']):
+    executed = ordered['attacks'] if preview_steps is None else ordered['attacks'][:preview_steps]
+    for index, step in enumerate(executed):
         current = change.objects['character:' + str(character.pk)]
         moved = move_step(change, current, step, ordered['profile'], moved, 'before')
         args = {k: copy.deepcopy(v) for k, v in step.items() if k not in {'number', 'target', 'external_target', 'movement_before', 'movement_after', '_movement_log'}}
@@ -219,12 +222,15 @@ def execute(user, payload, character, ability, scene, *, drawn=None, embedded=Fa
     current = change.objects['character:' + str(character.pk)]
     # Keep the existing journal useful while preserving full per-step metadata
     # for the sequence editor and detailed replay.
-    change.inputs['roll_result'] = ' · '.join(f"{step['number']}: {step['roll_result']}" for step in ordered['attacks'])
+    change.inputs['roll_result'] = ' · '.join(f"{step['number']}: {step['roll_result']}" for step in executed)
     change.inputs['attack_targets'] = [
         {**row, 'name': f"Атака {step['number']} · {row['name']}"}
         for step in change.inputs['attack_sequence']['attacks']
         for row in step['inputs'].get('attack_targets', [])
     ]
+    if preview_steps is not None:
+        if not executed:change.inputs['outcome'] = None
+        return change
     if not (ordered['all_missed'] and ability.data.get('reliable')):
         used = current.runtime.setdefault('used', {})
         used[str(ability.pk)] = used.get(str(ability.pk), 0) + 1

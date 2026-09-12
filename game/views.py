@@ -94,6 +94,7 @@ def home(request):
 
 def serialize_char(c, user):
     from .disarm import profile as disarm_profile
+    from .attack_sequences import profile as sequence_profile
     scene = current_scene(c)
     from .personal_abilities import definition as ability_definition
     abilities = []
@@ -119,7 +120,7 @@ def serialize_char(c, user):
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'definition':definition,'id': a.id, 'name': a.display_name, 'description': a.description, 'data': d,
                           'roll_conditions':targeting.roll_conditions(a,calc),'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
-                          'attack_setup':setup, 'charged_arrows':charged,'damage_reduction':defense,
+                          'attack_setup':setup, 'charged_arrows':charged,'damage_reduction':defense,'attack_sequence':sequence_profile(a),
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
                           'weavable':weaving.magical(a),'weaving_area':weaving.area(a),
                           'physical_weapon_units':targeting.physical_weapon_units(a,calc),
@@ -760,7 +761,7 @@ def item_action(user,p):
     return mutate(user,p)
 
 
-def use_ability(user, p, embedded=False, *, sequence_step=False):
+def use_ability(user, p, embedded=False, *, sequence_step=False, preview_steps=None):
     c = owned(user, p['character'])
     a = get_object_or_404(Entry, pk=p['ability'],kind='ability',archived=False)
     if not a.data.get('system') and not c.abilities.filter(pk=a.pk).exists():
@@ -768,6 +769,8 @@ def use_ability(user, p, embedded=False, *, sequence_step=False):
     scene = current_scene(c)
     if not scene:
         raise ValueError('Умение можно применить в активном бою')
+    if 'sequence_revision' in p and (type(p['sequence_revision']) is not int or p['sequence_revision'] != Clock.objects.get(pk=1).revision):
+        raise ValueError('Бой изменился. Пересчитайте последовательность перед применением.')
     drawn=None
     if 'draw_weapon' in p:
         if embedded or p['op']!='ability.use':raise ValueError('Оружие извлекается частью самостоятельной атаки')
@@ -796,7 +799,7 @@ def use_ability(user, p, embedded=False, *, sequence_step=False):
             raise ValueError(reason)
         if 'attacks' in p and not sequence_step:
             from .attack_sequences import execute as execute_sequence
-            return execute_sequence(user,p,c,a,scene,drawn=drawn,embedded=embedded)
+            return execute_sequence(user,p,c,a,scene,drawn=drawn,embedded=embedded,preview_steps=preview_steps)
         needs_roll = a.name not in [charged_arrows.NAME,weaving.NAME] and (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
         if needs_roll and not str(p.get('roll_result', '')).strip():
             raise ValueError('Введите результат физического броска. Действие пока не применено.')
@@ -1008,3 +1011,38 @@ def thrown_preview(request):
     except Http404:return JsonResponse({'error':'Запись не найдена'},status=404)
     except PermissionDenied as e:return JsonResponse({'error':str(e)},status=403)
     except (ValueError,TypeError) as e:return JsonResponse({'error':str(e)},status=400)
+
+
+@login_required
+@require_POST
+def sequence_preview(request):
+    """Replay a completed prefix under a savepoint; never commit a game change."""
+    try:
+        p=json.loads(request.body)
+        if not isinstance(p,dict):raise ValueError('Некорректный запрос')
+        owned(request.user,p.get('character'))
+        completed=p.get('completed');rows=p.get('attacks')
+        if not isinstance(rows,list) or type(completed) is not int or not 0<=completed<=len(rows):
+            raise ValueError('Укажите завершённые атаки последовательности')
+        planned=[]
+        for index,row in enumerate(rows):
+            if not isinstance(row,dict):raise ValueError('Некорректная атака')
+            if index<completed:planned.append(copy.deepcopy(row))
+            else:
+                # Unrolled attacks only describe intended recipients. No random
+                # results are generated or presented as actual physical rolls.
+                planned.append({k:copy.deepcopy(v) for k,v in row.items() if k in ['target','external_target']})
+                planned[-1].update(outcome='miss',roll_result='Не выполнено')
+        with transaction.atomic():
+            clock=Clock.objects.select_for_update().get(pk=1)
+            if type(p.get('sequence_revision')) is not int or p['sequence_revision']!=clock.revision:
+                raise ValueError('Бой изменился. Обновите план атак.')
+            change=use_ability(request.user,{**p,'op':'ability.use','attacks':planned},preview_steps=completed)
+            scene=change.scene
+            result={'revision':clock.revision,'completed':completed,'inputs':change.inputs,
+                    'characters':[serialize_char(c,request.user) for c in Character.objects.filter(pk__in=scene.state['order'])]}
+            transaction.set_rollback(True)
+        return JsonResponse(result)
+    except Http404:return JsonResponse({'error':'Запись не найдена'},status=404)
+    except PermissionDenied as e:return JsonResponse({'error':str(e)},status=403)
+    except (ValueError,TypeError,KeyError,ValidationError) as e:return JsonResponse({'error':str(e)},status=400)

@@ -3811,3 +3811,56 @@ class GameTests(TestCase):
         self.post(self.gm,{'op':'entry.save','id':a.pk,'kind':'ability','name':'Мои осколки','description':'Правка мастера','data':{'damage':True,'formula':'1к8'}})
         a.refresh_from_db();self.assertEqual(a.data['attack_sequence'],{'count':2,'targets':'any'})
         self.post(self.gm,{'op':'entry.save','id':a.pk,'kind':'ability','name':a.name,'data':{'attack_sequence':{'count':True,'targets':'same'}}},400)
+
+    def sequence_preview_request(self,p,completed,user=None):
+        self.client.force_login(user or self.alice)
+        return self.client.post('/api/sequence-preview/',json.dumps({**p,'completed':completed,'sequence_revision':p.get('sequence_revision',Clock.objects.get(pk=1).revision)}),content_type='application/json')
+
+    def test_sequence_preview_recalculates_prefix_without_persisting_game_state(self):
+        from .models import Receipt
+        a,p=self.sequence_setup(effects=[{'stat':'target_hit','value':2,'name':'Мишень','turns':3}])
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        before=(self.a.runtime,self.b.runtime,Event.objects.count(),Receipt.objects.count(),Clock.objects.get(pk=1).revision)
+        p['attacks'][1]={'target':self.b.pk}
+        response=self.sequence_preview_request(p,1);self.assertEqual(response.status_code,200,response.content[:500])
+        data=response.json();target=next(c for c in data['characters'] if c['id']==self.b.pk)
+        self.assertEqual(target['calc']['effects'][0]['value'],2)
+        self.assertIsNone(target['private_notes']);self.assertFalse(target['personal_abilities'])
+        self.assertEqual(len(data['inputs']['attack_sequence']['attacks']),1)
+        self.assertNotIn('Не выполнено',data['inputs']['roll_result'])
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(before,(self.a.runtime,self.b.runtime,Event.objects.count(),Receipt.objects.count(),Clock.objects.get(pk=1).revision))
+        # A repeated preview starts from the real state again, not its previous simulation.
+        self.assertEqual(self.sequence_preview_request(p,1).json(),data)
+
+    def test_sequence_preview_zero_steps_requires_no_roll_and_final_apply_uses_real_rolls(self):
+        a,p=self.sequence_setup()
+        skeleton={**p,'attacks':[{'target':self.b.pk},{'target':self.b.pk}]}
+        response=self.sequence_preview_request(skeleton,0);self.assertEqual(response.status_code,200,response.content[:500])
+        self.assertEqual(response.json()['inputs']['attack_sequence']['attacks'],[])
+        self.assertIsNone(response.json()['inputs']['outcome'])
+        self.post(self.alice,skeleton,400)
+        self.post(self.alice,{**p,'sequence_revision':response.json()['revision']})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['used'][str(a.pk)],1)
+        self.assertEqual(len(Event.objects.latest('id').inputs['attack_sequence']['attacks']),2)
+
+    def test_sequence_preview_rejects_stale_world_unauthorized_actor_and_missing_completed_roll(self):
+        a,p=self.sequence_setup();revision=Clock.objects.get(pk=1).revision
+        self.assertEqual(self.sequence_preview_request(p,1,self.bob).status_code,403)
+        invalid={**p,'attacks':[{'target':self.b.pk},p['attacks'][1]]}
+        self.assertEqual(self.sequence_preview_request(invalid,1).status_code,400)
+        for completed in [-1,3,True,'1']:
+            self.assertEqual(self.sequence_preview_request(p,completed).status_code,400)
+        self.post(self.gm,{'op':'hp','character':self.b.pk,'mode':'damage','value':1})
+        stale={**p,'sequence_revision':revision}
+        self.assertEqual(self.sequence_preview_request(stale,1).status_code,400)
+        self.post(self.alice,stale,400)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+
+    def test_sequence_preview_failure_restores_earlier_effects(self):
+        a,p=self.sequence_setup(effects=[{'stat':'target_hit','value':2,'name':'Мишень','turns':3}],attack_sequence={'count':2,'targets':'any'})
+        p['attacks'][1]={'target':None,'external_target':'Противник','outcome':'hit','roll_result':'15','external_bp':'wrong'}
+        before=Event.objects.count()
+        response=self.sequence_preview_request(p,2);self.assertEqual(response.status_code,400,response.content[:500])
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertFalse(self.b.runtime['effects']);self.assertEqual(Event.objects.count(),before)
