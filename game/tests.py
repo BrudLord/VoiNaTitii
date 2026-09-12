@@ -631,3 +631,54 @@ class GameTests(TestCase):
         self.post(self.gm,{'op':'healing.dismiss','character':self.a.id,'pending':key})
         self.a.refresh_from_db();self.b.refresh_from_db();self.assertFalse(self.a.runtime['pending_heals']);self.assertEqual(self.b.runtime['hp'],hp)
         self.post(self.gm,{'op':'undo'});self.a.refresh_from_db();self.assertIn(key,self.a.runtime['pending_heals'])
+
+    def test_private_knowledge_hidden_from_other_players_and_master(self):
+        from .models import Knowledge
+        p={'op':'knowledge.save','character':self.a.id,'kind':'contact','title':'Тайный связной','body':'Секрет','location':'Под мостом','details':'Союзник','tags':['связи'],'private':True}
+        result=self.post(self.alice,p);row=Knowledge.objects.get(pk=result['id'])
+        for user in [self.bob,self.gm]:
+            self.client.force_login(user)
+            character=next(c for c in self.client.get('/api/state/').json()['characters'] if c['id']==self.a.id)
+            self.assertEqual(character['knowledge'],[])
+            self.post(user,{**p,'id':row.id,'revision':1,'private':False},403)
+            self.post(user,{'op':'knowledge.archive','id':row.id,'revision':1,'archived':True},403)
+        self.client.force_login(self.alice)
+        own=next(c for c in self.client.get('/api/state/').json()['characters'] if c['id']==self.a.id)
+        self.assertEqual(own['knowledge'][0]['body'],'Секрет')
+        self.post(self.alice,{**p,'id':row.id,'revision':1,'private':False})
+        self.client.force_login(self.bob)
+        shared=next(c for c in self.client.get('/api/state/').json()['characters'] if c['id']==self.a.id)
+        self.assertEqual(shared['knowledge'][0]['title'],'Тайный связной')
+        self.post(self.bob,{**p,'id':row.id,'revision':2},403)
+        self.post(self.gm,{**p,'id':row.id,'revision':2,'private':False,'title':'Открытый контакт'})
+
+    def test_knowledge_conflicts_and_archive_restore(self):
+        from .models import Knowledge
+        p={'op':'knowledge.save','character':self.a.id,'kind':'lore','title':'Руины','private':True,'body':'Первая версия'}
+        result=self.post(self.alice,p);pk=result['id']
+        self.post(self.alice,{**p,'id':pk,'revision':1,'body':'Новая версия'})
+        self.post(self.alice,{**p,'id':pk,'revision':1,'body':'Старая вкладка'},400)
+        self.assertEqual(Knowledge.objects.get(pk=pk).body,'Новая версия')
+        self.post(self.alice,{'op':'knowledge.archive','id':pk,'revision':2,'archived':True})
+        self.post(self.alice,{'op':'knowledge.archive','id':pk,'revision':2,'archived':False},400)
+        self.post(self.alice,{'op':'knowledge.archive','id':pk,'revision':3,'archived':False})
+        row=Knowledge.objects.get(pk=pk);self.assertEqual(row.revision,4);self.assertFalse(row.archived)
+
+    def test_recipe_source_and_freeform_knowledge(self):
+        from .models import Knowledge
+        recipe=Entry.objects.create(kind='ability',name='Эликсир',description='Компоненты и время',data={'book_group':'craft','category':'noncombat'})
+        p={'op':'knowledge.save','character':self.a.id,'kind':'recipe','title':'Изученный эликсир','private':False,
+           'entry':recipe.id,'location':'Алхимик','details':'10 мер пыли','body':'Личная пометка','tags':['алхимия','алхимия',' зелье ']}
+        result=self.post(self.alice,p);row=Knowledge.objects.get(pk=result['id'])
+        self.assertEqual(row.entry_id,recipe.id);self.assertEqual(row.tags,['алхимия','зелье'])
+        self.post(self.alice,{**p,'id':row.id,'revision':1,'entry':None,'title':'Собственный рецепт'})
+        row.refresh_from_db();self.assertIsNone(row.entry_id)
+        self.post(self.alice,{**p,'kind':'contact'},400)
+        self.post(self.alice,{**p,'entry':self.bless.id},400)
+
+    def test_knowledge_validation_and_master_cannot_create_private_for_player(self):
+        p={'op':'knowledge.save','character':self.a.id,'kind':'contact','title':'Друг','private':True}
+        self.post(self.gm,p,403)
+        for invalid in [{'title':''},{'kind':'unknown'},{'private':'true'},{'tags':['x'*41]},{'body':'x'*30001}]:
+            self.post(self.alice,{**p,**invalid},400)
+        self.post(self.gm,{**p,'private':False})

@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools
+from . import enchantments, roll_pools, knowledge
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token
 from .alignment import schema as alignment_schema, validate_alignment
@@ -113,6 +113,7 @@ def serialize_char(c, user):
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
             'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'abilities': abilities,
+            'knowledge':knowledge.visible(c,user),
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
             'memberships': list(c.memberships.values('campaign_id', 'squad_id')),
@@ -352,6 +353,8 @@ def execute(user, p):
             entry.data = data
         entry.save()
         return {'id': entry.id}
+    elif op in ['knowledge.save','knowledge.archive']:
+        return knowledge.save(user,p)
     elif op.startswith('item.'):
         item_action(user, p)
     elif op == 'session.create':

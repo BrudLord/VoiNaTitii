@@ -134,3 +134,22 @@ class JournalEntry(models.Model):
 
     class Meta:
         ordering = ['-updated', '-id']
+
+
+class Knowledge(models.Model):
+    KINDS = [('recipe', 'Рецепт'), ('contact', 'Контакт'), ('lore', 'Запись')]
+    character = models.ForeignKey(Character, on_delete=models.CASCADE, related_name='knowledge')
+    entry = models.ForeignKey(Entry, null=True, blank=True, on_delete=models.SET_NULL)
+    kind = models.CharField(max_length=12, choices=KINDS)
+    title = models.CharField(max_length=160)
+    body = models.TextField(blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    details = models.CharField(max_length=1000, blank=True)
+    tags = models.JSONField(default=list, blank=True)
+    private = models.BooleanField(default=True)
+    archived = models.BooleanField(default=False)
+    revision = models.PositiveIntegerField(default=1)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['title', 'id']

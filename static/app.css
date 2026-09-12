@@ -26,3 +26,6 @@
 .dice-inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(58px,1fr));gap:8px}.allocation-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.pool-totals{position:sticky;top:0;background:var(--panel,#19222d);border:1px solid #a18750;border-radius:8px;padding:12px;margin:12px 0;z-index:2}
 
 .dice-inputs.assigned-dice{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+
+.knowledge-row{border-bottom:1px solid #34404d}.knowledge-row summary{display:flex;justify-content:space-between;gap:10px;padding:12px 4px;cursor:pointer}.knowledge-row summary>span:first-child{min-width:0}.knowledge-row summary small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55vw;color:#aeb7c1}.knowledge-body{padding:0 8px 14px}.knowledge-tabs{position:sticky;top:0;background:#141b23;z-index:1}
+@media(max-width:620px){.sheet-head{display:grid;grid-template-columns:minmax(0,1fr) auto}.sheet-head>.button-group{flex-wrap:nowrap;gap:4px}.sheet-head>.button-group button{padding:6px;font-size:.75rem}.sheet-head>.f-select{width:100%;min-width:0}.sheet-head .f-select-button{min-width:0;font-size:.8rem}}
