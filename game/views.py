@@ -376,6 +376,7 @@ def execute(user, p):
     elif op == 'entry.save':
         require_master(user)
         entry = get_object_or_404(Entry, pk=p['id'],personal_character__isnull=True) if p.get('id') else Entry()
+        original=copy.copy(entry)
         if p.get('archive'):
             entry.archived = True
         else:
@@ -389,6 +390,8 @@ def execute(user, p):
             data = p.get('data', {})
             if not isinstance(data, dict):
                 raise ValueError('Параметры должны быть объектом')
+            from .ability_profiles import editable_data
+            if entry.kind=='ability':data=editable_data(original if original.pk else entry,data)
             validate_entry(data)
             entry.data = {**data,'reviewed':True}
         entry.save()
@@ -704,14 +707,14 @@ def execute(user, p):
 
 
 def validate_entry(d):
+    if not isinstance(d,dict):
+        raise ValueError('Параметры должны быть объектом')
     defenses.validate(d)
     enchantments.validate_profile(d)
     weaponry.validate_profile(d)
     weaponry.validate_wide_swing(d)
     weaponry.validate_unarmed(d)
     stances.validate_sphere(d)
-    if not isinstance(d,dict):
-        raise ValueError('Параметры должны быть объектом')
     for key in ['formula', 'dice', 'stat', 'source_name']:
         if key in d and not isinstance(d[key], str):
             raise ValueError('Параметр ' + key + ' должен быть строкой')
@@ -736,8 +739,6 @@ def validate_entry(d):
     for field in ['keywords', 'requires','subraces','allowed_schools','families']:
         if field in d and (not isinstance(d[field], list) or any(not isinstance(x, str) for x in d[field])):
             raise ValueError('Ключевые слова должны быть списком строк')
-    if not isinstance(d,dict):
-        raise ValueError('Параметры должны быть объектом')
     if not isinstance(d.get('effects', []), list):
         raise ValueError('Эффекты должны быть списком')
     for e in d.get('effects', []):

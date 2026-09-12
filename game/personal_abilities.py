@@ -1,9 +1,9 @@
 """A character's edited ability never mutates the shared reference entry."""
-import copy
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 from .models import Entry
 from .rules import current_scene
+from .ability_profiles import editable_data
 
 
 def save(user,p):
@@ -17,15 +17,11 @@ def save(user,p):
     if original.data.get('system'):raise ValueError('Системное действие редактируется мастером в справочнике')
     data=p.get('data')
     if not isinstance(data,dict):raise ValueError('Параметры должны быть объектом')
-    data=copy.deepcopy(data)
+    data=editable_data(original,data)
     if data.get('system'):raise ValueError('Личное умение не может быть системным')
     validate_entry(data)
     name=str(p.get('name','')).strip()[:160]
     if not name:raise ValueError('Укажите название')
-    # Keep identity-based mechanics editable when the display name changes.
-    from .weaponry import wide_swing_profile
-    if 'wide_swing' not in data and wide_swing_profile(original) is not None:
-        data['wide_swing']=wide_swing_profile(original)
     data['reviewed']=True
     data['display_name']=name
     entry=original if original.personal_character_id==c.pk else Entry(kind='ability',personal_character=c,source=original.source,source_entry=original)
@@ -52,4 +48,4 @@ def restore(user,p):
 
 def definition(entry):
     return {'id':entry.pk,'kind':entry.kind,'name':entry.display_name,'description':entry.description,
-            'data':copy.deepcopy(entry.data),'personal':bool(entry.personal_character_id),'source_entry_id':entry.source_entry_id}
+            'data':editable_data(entry),'personal':bool(entry.personal_character_id),'source_entry_id':entry.source_entry_id}

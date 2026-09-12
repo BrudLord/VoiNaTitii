@@ -3368,3 +3368,52 @@ class GameTests(TestCase):
         self.assertTrue(any(any(e['name']=='БП' and e['value']==2 for e in d.get('effects',[])) for d in candidates))
         for value in [True,-1,101,1.5]:
             with self.assertRaises(ValueError):validate_entry({'miss_damage_divisor':value})
+
+    def test_legacy_named_profiles_survive_master_rename(self):
+        from .weaponry import unarmed_profile
+        from .defenses import profile
+        from .stances import sphere_profile
+        cases=[('Бой без оружия','unarmed_combat',{'dice':'1к8','ignore_requirements':True}),
+               ('Парирующие потоки','damage_reduction',{'divisor':2,'unarmed':True}),
+               ('Элементальная сфера','elemental_sphere',{'strength':1}),
+               ('Широкий замах','wide_swing',{'hit':1,'reach':1})]
+        for name,key,value in cases:
+            entry=Entry.objects.create(kind='ability',name=name,data={'category':'passive' if key in ['unarmed_combat','wide_swing'] else 'active'})
+            self.post(self.gm,{'op':'entry.save','id':entry.pk,'kind':'ability','name':'Переименовано '+name,'data':entry.data})
+            entry.refresh_from_db();self.assertEqual(entry.data[key],value)
+            self.assertEqual(entry.name,'Переименовано '+name)
+        self.assertEqual(profile(Entry.objects.get(name='Переименовано Парирующие потоки'))['divisor'],2)
+        self.assertEqual(unarmed_profile(Entry.objects.get(name='Переименовано Бой без оружия'))['dice'],'1к8')
+        self.assertEqual(sphere_profile(Entry.objects.get(name='Переименовано Элементальная сфера'))['strength'],1)
+
+    def test_legacy_profile_is_visible_and_editable_after_personal_rename(self):
+        from .personal_abilities import definition
+        original=Entry.objects.create(kind='ability',name='Бой без оружия',data={'category':'passive'})
+        self.a.abilities.add(original)
+        p={'op':'character.ability.save','character':self.a.pk,'id':original.pk,'revision':self.a.revision,
+           'name':'Моя техника','description':'Своя версия','data':{'category':'passive'}}
+        result=self.post(self.alice,p);personal=Entry.objects.get(pk=result['id'])
+        self.assertEqual(definition(personal)['data']['unarmed_combat']['dice'],'1к8')
+        self.a.refresh_from_db()
+        self.post(self.alice,{**p,'id':personal.pk,'revision':self.a.revision,'data':{'category':'passive','unarmed_combat':{'dice':'2к6','ignore_requirements':False}}})
+        self.assertEqual(computed(self.a)['weapon'],'2к6')
+        original.refresh_from_db();self.assertNotIn('unarmed_combat',original.data)
+
+    def test_catalog_exposes_legacy_profiles_without_mutating_records(self):
+        from .catalogue import payload
+        entry=Entry.objects.create(kind='ability',name='Парирующие потоки',data={'category':'active'})
+        row=next(e for e in payload()['catalog'] if e['id']==entry.pk)
+        self.assertEqual(row['data']['damage_reduction'],{'divisor':2,'unarmed':True})
+        entry.refresh_from_db();self.assertNotIn('damage_reduction',entry.data)
+        row['data']['damage_reduction']['divisor']=4
+        self.assertEqual(next(e for e in payload()['catalog'] if e['id']==entry.pk)['data']['damage_reduction']['divisor'],2)
+
+    def test_profile_defaults_preserve_explicit_disabled_and_custom_settings(self):
+        from .ability_profiles import editable_data
+        from .views import validate_entry
+        e=Entry(kind='ability',name='Бой без оружия',data={'unarmed_combat':None})
+        self.assertIsNone(editable_data(e,{})['unarmed_combat'])
+        custom={'dice':'2к4','ignore_requirements':False}
+        self.assertEqual(editable_data(e,{'unarmed_combat':custom})['unarmed_combat'],custom)
+        for value in [None,[],4,'invalid']:
+            with self.assertRaises(ValueError):validate_entry(value)
