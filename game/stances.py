@@ -5,6 +5,17 @@ from types import SimpleNamespace
 
 NAME='Стихийная поддержка'
 MODES=['Огонь','Вода','Земля','Воздух']
+SPHERE='Элементальная сфера'
+SPHERE_EFFECTS={'Огонь':'Поджог','Вода':'Влага','Земля':'Кислота','Воздух':'Рассеивание'}
+
+def sphere_profile(a):
+    return a.data.get('elemental_sphere',{'strength':1} if getattr(a,'name','')==SPHERE else None)
+
+def validate_sphere(data):
+    p=data.get('elemental_sphere')
+    if p is not None and (not isinstance(p,dict) or set(p)!={'strength'} or type(p['strength']) is not int or not 0<=p['strength']<=1000):
+        raise ValueError('Укажите целую силу первородного эффекта от 0 до 1000')
+
 
 
 def learned(c,name):
@@ -17,6 +28,19 @@ def mode(c):
 
 
 def effective(c,a):
+    sphere=sphere_profile(a)
+    if sphere is not None:
+        from .statuses import STATUS
+        a=copy.copy(a);a.data=copy.deepcopy(a.data)
+        element=mode(c)
+        effects=[e for e in a.data.get('effects',[]) if not e.get('elemental_sphere')]
+        if element:
+            name=SPHERE_EFFECTS[element];stat,sign=STATUS[name]
+            effects.append({'name':name,'key':'sphere:element','stat':stat,'value':sign*sphere['strength'],'turns':3,'elemental_sphere':True})
+        words=[w for w in a.data.get('keywords',[]) if w not in MODES]
+        if element:words.append(element)
+        a.data.update(elemental_sphere=sphere,effects=effects,keywords=words,damage_type=element or '',manual=False,
+                      damage=True,weapon=False,target=a.data.get('target','single'),formula=a.data.get('formula','1к8'))
     if a.name!=NAME:
         if not learned(c,'Огонь и Вода'):return a
         from .statuses import status_name

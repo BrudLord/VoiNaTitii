@@ -704,6 +704,7 @@ def validate_entry(d):
     enchantments.validate_profile(d)
     weaponry.validate_profile(d)
     weaponry.validate_wide_swing(d)
+    stances.validate_sphere(d)
     if not isinstance(d,dict):
         raise ValueError('Параметры должны быть объектом')
     for key in ['formula', 'dice', 'stat', 'source_name']:

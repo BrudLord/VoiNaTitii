@@ -209,6 +209,8 @@ def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=F
         return 'Только вне боя' if scene else ''
     if not scene:
         return 'Начните бой'
+    from .stances import sphere_profile, mode
+    if sphere_profile(ability) is not None and not mode(c):return 'Сначала активируйте Стихийную поддержку'
     if getattr(ability,'name','')=='Передача истощения':
         from .prepared_attacks import exhaustion
         if not exhaustion(c):return 'Нет истощения маны для передачи'

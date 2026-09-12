@@ -3122,3 +3122,62 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'undo'})
         self.post(self.alice,{'op':'weapon.select','character':self.a.pk,'item':0})
         self.a.refresh_from_db();self.assertEqual(computed(self.a)['offhand_penalty'],0)
+
+    def sphere_setup(self,mode='Огонь'):
+        support=Entry.objects.create(kind='ability',name='Стихийная поддержка',data={'circle':1})
+        sphere=Entry.objects.create(kind='ability',name='Элементальная сфера',data={'circle':0,'action':'main','damage':True,'formula':'1к8','rolls':True,'keywords':['Дальнобойный 5']})
+        self.a.abilities.add(support,sphere);self.start();self.a.refresh_from_db()
+        if mode:self.a.runtime['elemental_support']={'ability':support.pk,'mode':mode};self.a.save()
+        return sphere,{'op':'ability.use','character':self.a.pk,'ability':sphere.pk,'targets':[self.b.pk],'outcome':'hit','roll_result':'Попадание 15; урон 6'}
+
+    def test_elemental_sphere_changes_effect_with_stance_and_fire_water_bonus(self):
+        from .views import serialize_char
+        sphere,p=self.sphere_setup()
+        passive=Entry.objects.create(kind='ability',name='Огонь и Вода',data={'category':'passive'})
+        self.a.abilities.add(passive)
+        for mode,name,value in [('Огонь','Поджог',2),('Вода','Влага',2),('Земля','Кислота',-1)]:
+            self.a.refresh_from_db();self.a.runtime['elemental_support']['mode']=mode;self.a.save()
+            row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==sphere.pk)
+            self.assertIn(mode,row['data']['keywords']);self.assertFalse(row['data']['manual'])
+            self.assertEqual(row['data']['damage_type'],mode)
+            self.assertEqual(row['formula'],'1к8 +3' if mode=='Огонь' else '1к8')
+            self.post(self.alice,p);self.b.refresh_from_db()
+            self.assertEqual((self.b.runtime['effects'][0]['name'],self.b.runtime['effects'][0]['value']),(name,value))
+            self.assertEqual(self.b.runtime['hp'],10)
+            self.post(self.alice,{'op':'undo'})
+
+    def test_elemental_sphere_air_spreads_status_and_undoes_chain(self):
+        sphere,p=self.sphere_setup('Воздух')
+        self.b.refresh_from_db();self.b.runtime['effects']=[{'key':'burn','name':'Поджог','stat':'status','value':3,'remaining':1,'duration':'turns'}];self.b.save()
+        self.post(self.alice,{**p,'reactions':{f'{self.b.pk}:0':'burn'},'spreads':{f'{self.b.pk}:0':{'targets':[self.a.pk],'in_range':True}}})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['effects'][0]['value'],3)
+        self.assertEqual(Event.objects.latest('id').inputs['dispersions'][0]['radius'],1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['effects'],[])
+
+    def test_elemental_sphere_requires_stance_and_physical_roll_and_miss_has_no_effect(self):
+        sphere,p=self.sphere_setup(None)
+        count=Event.objects.count();self.post(self.alice,p,400);self.assertEqual(Event.objects.count(),count)
+        self.a.refresh_from_db();self.a.runtime['elemental_support']={'mode':'Земля'};self.a.save()
+        self.post(self.alice,{**p,'roll_result':''},400)
+        self.post(self.alice,{**p,'targets':[self.a.pk,self.b.pk]},400)
+        self.post(self.alice,{**p,'outcome':'miss'})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_elemental_sphere_profile_preserves_custom_formula_and_other_effects(self):
+        from .stances import effective
+        sphere,p=self.sphere_setup('Вода')
+        sphere.data.update(elemental_sphere={'strength':4},formula='2к8',effects=[{'stat':'temp','value':5}]);sphere.name='Переименованная сфера'
+        effective_sphere=effective(self.a,sphere)
+        self.assertEqual(effective_sphere.data['formula'],'2к8')
+        self.assertEqual(effective_sphere.data['effects'][0],{'stat':'temp','value':5})
+        self.assertEqual(effective_sphere.data['effects'][1]['value'],4)
+        from .views import validate_entry
+        for strength in [-1,True,1.5,'2']:
+            with self.assertRaises(ValueError):validate_entry({'elemental_sphere':{'strength':strength}})
+
+    def test_book_elemental_sphere_import_has_editable_profile(self):
+        from .book_audit import abilities
+        from django.conf import settings
+        rows={name:data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text())}
+        self.assertEqual(rows['Элементальная сфера']['elemental_sphere'],{'strength':1})
+        self.assertFalse(rows['Элементальная сфера']['manual'])
