@@ -17,13 +17,17 @@ def resolve(character,ability,calc,targets,payload):
     if type(external) is not int or not 0<=external<=1000:
         raise ValueError('БП противника должно быть целым числом от 0 до 1000')
     if targets and external:raise ValueError('БП выбранных персонажей берётся из их эффектов')
+    prone=payload.get('external_prone',False)
+    if type(prone) is not bool or (targets and prone):raise ValueError('Состояние выбранной цели берётся из её эффектов')
+    from .weaponry import keywords, matches_keyword
+    external+=2 if prone and matches_keyword('Ближний',keywords(ability,calc)) else 0
     from .rules import computed, formula
     from .statuses import status_name
     base=hit_bonus(character,ability,calc)
     result=[]
     for target in targets or [None]:
         effects=computed(target)['effects'] if target else []
-        bp=max((max(0,e.get('value',0)) for e in effects if status_name(e)=='БП'),default=0) if target else external
+        bp=max((max(0,e.get('value',0)) for e in effects if status_name(e)=='БП'),default=0) if target else payload.get('external_bp',0)
         extra=bp if ability.data.get('damage_from_bp') else 0
         damage=formula(character,ability,payload.get('outcome')=='critical',calc)
         bonus=enchantments.ability_bonus({**calc,'effects':effects},ability,'target_hit') if target else external

@@ -601,6 +601,16 @@ def execute(user, p):
         key = p.get('action')
         if key not in ['main', 'minor', 'move'] or c.runtime.get('actions', {}).get(key, 0) < 1:
             raise ValueError('Действие недоступно')
+        if p.get('exchange')=='stand':
+            statuses={status_name(e) for e in c.runtime.get('effects',[])}
+            if key!='move' or 'Сбит с ног' not in statuses:
+                raise ValueError('Подъём требует действия движения и состояния «Сбит с ног»')
+            if c.runtime.get('stun_pending',0) or statuses.intersection({'Сон','Страх'}):
+                raise ValueError('Сейчас персонаж должен пропускать действия')
+            c.runtime['actions'][key]-=1
+            c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if status_name(e)!='Сбит с ног']
+            change.finish()
+            return {}
         c.runtime['actions'][key] -= 1
         if c.runtime.get('stun_pending',0):
             if p.get('exchange'):

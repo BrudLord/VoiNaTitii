@@ -91,6 +91,8 @@ def computed(c):
                  (c.level - 1) * (int(kd.get('hp_level', 4)) + mods['con']))
     from .statuses import status_name
     statuses={status_name(e) for e in effects}
+    if 'Сбит с ног' in statuses:
+        effects.append({'name':'По лежащей цели','stat':'target_hit','value':2,'keyword':'Ближний'})
     if 'Обездвижен' in statuses: bonuses['speed']=-100000
     return {'stats': stats, 'mods': mods, 'sum': sum(stats.values()), 'max_hp': max_hp,
             'ac': max(0, 5 + mods['dex'] + min(5, armor) + other_armor + int(rd.get('ac_bonus',0)) + bonuses['ac']),

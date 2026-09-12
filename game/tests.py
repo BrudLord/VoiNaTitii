@@ -1803,3 +1803,56 @@ class GameTests(TestCase):
         self.assertEqual(availability(self.a,ability,scene),'')
         self.a.runtime['weapon_id']=bow.id
         self.assertEqual(availability(self.a,ability,scene),'Нужно подходящее оружие')
+
+    def test_prone_melee_bonus_does_not_change_owner_hit_or_speed(self):
+        from .targeting import resolve
+        self.b.runtime['effects']=[{'key':'prone','name':'Сбит с ног','stat':'status','value':1,'duration':'battle'}]
+        self.b.save()
+        calc=computed(self.b)
+        self.assertEqual((calc['hit'],calc['speed']),(0,6))
+        for word,bonus in [('Ближний 1',2),('Дальнобойный 5',0),('Вспышка 1',0)]:
+            ability=Entry(name='Атака',data={'damage':True,'formula':'1к6','keywords':[word]})
+            row=resolve(self.a,ability,computed(self.a),[self.b],{})[0]
+            self.assertEqual(row['target_bonus'],bonus)
+
+    def test_stand_spends_movement_and_undo_redo_restores_prone(self):
+        self.start();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'prone','name':'Сбит с ног','stat':'status','value':1,'duration':'battle'},
+                                   {'key':'bless','name':'Благословение','stat':'hit','value':2,'duration':'battle'}]
+        self.a.save()
+        payload={'op':'action.spend','character':self.a.id,'action':'move','exchange':'stand'}
+        self.post(self.bob,payload,403)
+        self.post(self.alice,{**payload,'action':'main'},400)
+        self.post(self.alice,payload)
+        self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['move'],0)
+        self.assertEqual([e['name'] for e in self.a.runtime['effects']],['Благословение'])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['move'],1)
+        self.assertEqual(len(self.a.runtime['effects']),2)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['move'],0)
+        self.assertEqual(len(self.a.runtime['effects']),1)
+        self.post(self.alice,payload,400)
+
+    def test_standing_cannot_bypass_skipped_actions(self):
+        self.start();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'prone','name':'Сбит с ног','stat':'status','value':1,'duration':'battle'}]
+        self.a.runtime['stun_pending']=1;self.a.save()
+        self.post(self.alice,{'op':'action.spend','character':self.a.id,'action':'move','exchange':'stand'},400)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['move'],1)
+        self.assertEqual(len(self.a.runtime['effects']),1)
+
+    def test_prone_book_effects_and_external_bonus(self):
+        from .targeting import resolve
+        for name in ['Гейзер','Бушующее море']:
+            desc,data,source=self.book_row(name)
+            effects=[e for e in data.get('effects',[]) if e.get('name')=='Сбит с ног']
+            self.assertEqual(len(effects),1,name)
+            self.assertEqual(effects[0]['duration'],'battle')
+        ability=Entry(name='Атака',data={'damage':True,'formula':'1к6','keywords':['Ближний 1'],'damage_from_bp':True})
+        row=resolve(self.a,ability,computed(self.a),[],{'external_bp':3,'external_prone':True})[0]
+        self.assertEqual(row['target_bonus'],5)
+        self.assertEqual(row['bp_damage'],3)
+        ability.data['keywords']=['Дальнобойный 5']
+        self.assertEqual(resolve(self.a,ability,computed(self.a),[],{'external_prone':True})[0]['target_bonus'],0)

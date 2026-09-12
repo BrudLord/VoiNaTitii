@@ -36,7 +36,7 @@ def literal_effects(description):
                 clause_effects.append({'stat':bonuses[match[2]],'value':int(match[1].replace('−','-')),
                                        'name':'Бонус к '+match[2],**timing})
         for status,(stat,sign) in STATUS.items():
-            if status in ['Сон','Страх','Метка','Сбит с ног']:continue
+            if status in ['Сон','Страх','Метка']:continue
             pattern=r'(?<![\w])'+re.escape(status)+r'(?:\s+(\d+))?(?![\w])'
             for match in re.finditer(pattern,body):
                 if not match[1] and status not in ['Сон','Страх','Обездвижен','Ослепление','Метка','Сбит с ног']:continue
@@ -45,6 +45,8 @@ def literal_effects(description):
                 timing=duration(tail)
                 if timing is None:continue
                 effect={'stat':stat,'value':sign*int(match[1] or 1),'name':status,'key':'status:'+status,**timing}
+                if status=='Сбит с ног' and timing=={'turns':3} and not tail.lstrip().startswith('на '):
+                    effect.pop('turns',None);effect['duration']='battle'
                 if status in STUN:effect.pop('turns',None);effect['duration']='actions'
                 clause_effects.append(effect)
         if clause_effects:
