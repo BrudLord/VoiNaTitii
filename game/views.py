@@ -110,6 +110,7 @@ def serialize_char(c, user):
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
+                          'ready_reason':availability(c,a,scene,calc,readied=True),
                           'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, not bool(roll_pools.profile(a)), calc,scene=scene),
                           'damage_contributions':boulder_bonus(c,a,calc,scene),
                           'rolls_required': rolls_required(a) or bool(a.data.get('weapon'))})
@@ -430,6 +431,7 @@ def execute(user, p):
             for c in chars.values():
                 from .alchemy import end_battle
                 end_battle(change,c)
+                c.runtime.pop('readied',None);c.runtime.pop('readied_queue',None);c.runtime.pop('initiative_shift',None)
                 c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
                 c.runtime['hp'] = computed(c)['max_hp']
         else:
@@ -446,6 +448,8 @@ def execute(user, p):
             scene.state['turn'] = (scene.state['turn'] + 1) % len(order)
             if scene.state['turn'] == 0:
                 scene.state['round'] += 1
+                from .readied import next_round
+                next_round(scene,chars)
                 for c in chars.values():
                     c.runtime.setdefault('actions', {})['reaction'] = computed(c)['reactions']
             next_char = chars[order[scene.state['turn']]]
@@ -560,6 +564,9 @@ def execute(user, p):
         change = Change(user,('Выбор фокусировки · ' if is_focus else 'Выбор оружия · ')+c.name,current_scene(c))
         change.watch(c).runtime['focus_id' if is_focus else 'weapon_id'] = weapon.id if weapon else 0
         change.finish()
+    elif op in ['action.ready','action.perform_ready']:
+        from . import readied
+        return (readied.reserve(user,p) if op=='action.ready' else readied.perform(user,p)) or {}
     elif op == 'action.spend':
         c = owned(user, p['character'])
         scene = current_scene(c)
@@ -647,7 +654,7 @@ def use_ability(user, p):
     if aura and not d.get('aura'):
         raise ValueError('Это не аура')
     if not aura:
-        reason = availability(c, a, scene)
+        reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False)
         if reason:
             raise ValueError(reason)
         needs_roll = (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
@@ -685,7 +692,7 @@ def use_ability(user, p):
                 c.runtime.setdefault('once_per_turn',{})[contribution['key']]=turn_token(scene)
     if not aura:
         act = d.get('action', 'main')
-        if act != 'free':
+        if act != 'free' and not p.get('use_ready'):
             c.runtime['actions'][act] -= 1
         if not (p.get('outcome') == 'miss' and d.get('reliable')):
             used = c.runtime.setdefault('used', {})
@@ -729,6 +736,9 @@ def use_ability(user, p):
                         put_effect(t,effect)
                     else:
                         apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'))
+    if p.get('use_ready') and not aura:
+        from .readied import resolve
+        resolve(change,c,scene,p,d.get('action','main'))
     change.finish()
 
 

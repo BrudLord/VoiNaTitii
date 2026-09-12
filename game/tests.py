@@ -940,3 +940,77 @@ class GameTests(TestCase):
         self.assertEqual(serialize_char(self.a,self.alice)['main_action_reason'],'Ход другого персонажа')
         self.post(self.alice,{**p,'revision':oil.revision,'weapon_revision':weapon.revision},400)
         oil.refresh_from_db();self.assertEqual(oil.quantity,2)
+
+    def ready(self,action='main'):
+        return self.post(self.alice,{'op':'action.ready','character':self.a.id,'action':action,'condition':'Когда союзник подаст знак'})
+
+    def test_readied_ability_uses_reserved_action_and_shifts_only_next_round(self):
+        scene=self.start();self.ready();self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.turn(scene,self.alice)
+        p={'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id],
+           'use_ready':True,'triggered':True,'dex_roll':5,'outcome':'hit'}
+        self.post(self.alice,p);scene.refresh_from_db();self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(scene.state['order'],[self.a.id,self.b.id])
+        self.assertEqual(scene.state['turn'],1);self.assertEqual(self.b.runtime['temp'],5)
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertNotIn('readied',self.a.runtime)
+        self.assertEqual(self.a.runtime['initiative_shift']['value'],9)
+        self.turn(scene,self.bob);scene.refresh_from_db();self.a.refresh_from_db()
+        self.assertEqual(scene.state['order'],[self.b.id,self.a.id]);self.assertEqual(scene.state['turn'],0)
+        self.assertEqual(scene.state['initiative'][str(self.a.id)],9)
+        self.assertEqual(scene.state['round'],2);self.assertNotIn('initiative_shift',self.a.runtime)
+        self.post(self.bob,{'op':'undo'});scene.refresh_from_db();self.a.refresh_from_db()
+        self.assertEqual(scene.state['order'],[self.a.id,self.b.id]);self.assertIn('initiative_shift',self.a.runtime)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertIn('readied',self.a.runtime);self.assertEqual(self.b.runtime['temp'],0)
+
+    def test_readied_validation_does_not_spend_reserved_action_or_ability(self):
+        scene=self.start();self.ready();self.turn(scene,self.alice)
+        p={'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id],
+           'use_ready':True,'triggered':True,'outcome':'hit'}
+        self.post(self.alice,p,400);self.post(self.alice,{**p,'dex_roll':10,'triggered':False},400)
+        self.post(self.alice,{**p,'dex_roll':True},400)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertIn('readied',self.a.runtime);self.assertFalse(self.a.runtime['used']);self.assertEqual(self.b.runtime['temp'],0)
+        self.post(self.alice,{**p,'dex_roll':10});self.a.refresh_from_db()
+        self.assertNotIn('initiative_shift',self.a.runtime)
+        self.post(self.alice,{**p,'dex_roll':10},400)
+
+    def test_readied_action_expires_at_round_end_and_undo_restores_it(self):
+        scene=self.start();self.ready('move');self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.a.refresh_from_db();self.assertNotIn('readied',self.a.runtime)
+        self.post(self.alice,{'op':'action.perform_ready','character':self.a.id,'triggered':True,'voluntary_fail':True},400)
+        self.post(self.bob,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['readied']['action'],'move')
+        self.post(self.alice,{'op':'action.perform_ready','character':self.a.id,'triggered':True,'voluntary_fail':True})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['initiative_shift']['after'],self.b.id)
+
+    def test_readied_reservation_requires_minor_and_preserves_unused_charges(self):
+        self.start()
+        self.post(self.alice,{'op':'action.ready','character':self.a.id,'action':'minor','condition':'Знак'},400)
+        self.post(self.alice,{'op':'action.ready','character':self.a.id,'action':'main','condition':''},400)
+        self.post(self.bob,{'op':'action.ready','character':self.a.id,'action':'main','condition':'Знак'},403)
+        self.ready();self.a.refresh_from_db();self.assertFalse(self.a.runtime['used'])
+        self.post(self.alice,{'op':'action.ready','character':self.a.id,'action':'move','condition':'Знак'},400)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.post(self.alice,{'op':'action.spend','character':self.a.id,'action':'main','exchange':'minor'})
+        self.ready('minor');self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['minor'],0)
+
+    def test_readied_action_cannot_bypass_wrong_action_or_sleep(self):
+        scene=self.start();self.ready('move');self.turn(scene,self.alice)
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id],
+                              'use_ready':True,'triggered':True,'dex_roll':10},400)
+        self.a.refresh_from_db();self.a.runtime['effects'].append({'key':'sleep','name':'Сон','value':1});self.a.save()
+        self.post(self.alice,{'op':'action.perform_ready','character':self.a.id,'triggered':True,'dex_roll':10},400)
+
+    def test_multiple_readied_actions_can_resolve_in_any_order(self):
+        scene=self.start();self.a.refresh_from_db();self.a.runtime['actions']['minor']=2;self.a.save()
+        self.ready('main');self.ready('move');self.a.refresh_from_db()
+        first=self.a.runtime['readied']['key'];second=self.a.runtime['readied_queue'][0]['key']
+        self.turn(scene,self.alice)
+        self.post(self.alice,{'op':'action.perform_ready','character':self.a.id,'ready_id':second,'triggered':True,'dex_roll':10})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['readied']['key'],first)
+        self.assertFalse(self.a.runtime.get('readied_queue'))
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id],
+                              'use_ready':True,'ready_id':first,'triggered':True,'dex_roll':10})
+        self.a.refresh_from_db();self.assertNotIn('readied',self.a.runtime)

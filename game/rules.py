@@ -167,7 +167,7 @@ def current_scene(c):
     return None
 
 
-def availability(c, ability, scene=None, calc=None):
+def availability(c, ability, scene=None, calc=None, readied=False):
     calc = calc or computed(c)
     d = ability.data
     category = d.get('category', 'active')
@@ -182,13 +182,17 @@ def availability(c, ability, scene=None, calc=None):
     if statuses.intersection({'Сон','Страх'}):
         return 'Персонаж пропускает ход: '+', '.join(statuses.intersection({'Сон','Страх'}))
     action = d.get('action', 'main')
+    if readied:
+        from .readied import reason
+        blocked=reason(c,scene,action,readied if isinstance(readied,str) else None)
+        if blocked:return blocked
     if c.runtime.get('stun_pending',0) and scene.state['order'][scene.state['turn']]==c.id:
         return 'Оглушение: выберите пропускаемые действия'
     if action == 'reaction' and scene.state['order'][scene.state['turn']] == c.id:
         return 'Реакция доступна на чужом ходу'
-    if action not in ['reaction','free'] and scene.state['order'][scene.state['turn']] != c.id:
+    if not readied and action not in ['reaction','free'] and scene.state['order'][scene.state['turn']] != c.id:
         return 'Ход другого персонажа'
-    if action != 'free' and c.runtime.get('actions', {}).get(action, 0) < 1:
+    if not readied and action != 'free' and c.runtime.get('actions', {}).get(action, 0) < 1:
         return 'Нет нужного действия'
     count = limit(c.level, int(d.get('circle', 0)))
     if count is not None and c.runtime.get('used', {}).get(str(ability.id), 0) >= count:
