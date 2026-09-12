@@ -13,7 +13,8 @@ def boulder_bonus(character, ability, calc, scene):
     result=[]
     token=turn_token(scene)
     available=not token or character.runtime.get('once_per_turn',{}).get('boulder')!=token
-    melee=any(k.startswith('Ближний') for k in data.get('keywords',[]))
+    from .weaponry import keywords
+    melee=any(k.startswith('Ближний') for k in keywords(ability,calc))
     if melee and data.get('damage') and available:
         result.append({'key':'boulder','value':calc['mods'].get(passive.data.get('stat','wis'),0),
                        'type':'Земля','name':'Глыба','once_per_turn':True})

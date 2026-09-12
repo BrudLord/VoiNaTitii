@@ -5,7 +5,7 @@ from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 from .models import Item, Character, Entry
 from .rules import Change, current_scene
-from . import enchantments
+from . import enchantments, weaponry
 
 
 def amount(value, maximum=100000, minimum=0):
@@ -47,7 +47,7 @@ def mutate(user,p):
     change=Change(user,label,scene)
     if item:change.watch(item)
     if op=='item.equip':
-        if item.data.get('item_type') in ['currency','consumable']:raise ValueError('Этот предмет нельзя надеть')
+        if item.data.get('item_type') in ['currency','consumable','material']:raise ValueError('Этот предмет нельзя надеть')
         if not character:raise ValueError('Сначала передайте предмет персонажу')
         if not item.equipped and not item.quantity:raise ValueError('Нет предмета в наличии')
         change.watch(character)
@@ -106,12 +106,18 @@ def mutate(user,p):
         if not isinstance(data,dict):raise ValueError('Некорректные свойства')
         validate_entry(data)
         kind=data.get('item_type','other')
-        if kind not in ['weapon','focus','armor','shield','consumable','currency','other']:raise ValueError('Неизвестный тип предмета')
+        if kind not in ['weapon','focus','armor','shield','consumable','currency','material','other']:raise ValueError('Неизвестный тип предмета')
         item.name=name;item.quantity=amount(p.get('quantity',1));item.slot=str(p.get('slot',''))[:40]
         item.equipped=bool(p.get('equipped')) and bool(item.character_id) and item.quantity>0
+        if kind=='material':
+            if data.get('material_kind') not in ['magic_dust','elemental','other']:raise ValueError('Выберите вид компонента')
+            if data.get('material_kind')=='elemental':
+                from .crafting import ELEMENTS
+                if data.get('element') not in set(ELEMENTS.values()):raise ValueError('Выберите стихию компонента')
         if kind=='currency':item.name='Золото';item.slot='';data={'item_type':'currency'}
-        if kind in ['currency','consumable']:item.equipped=False
+        if kind in ['currency','consumable','material']:item.equipped=False
         enchantments.validate(data)
+        weaponry.validate(data)
         if kind=='weapon' and data.get('dice') and not re.fullmatch(r'[1-9]\d{0,2}[кd][1-9]\d{0,2}',data['dice']):
             raise ValueError('Урон оружия: количество и грани кубиков, например 1к6')
         if 'entry' in p:item.entry=get_object_or_404(Entry,pk=p['entry'],kind='item') if p['entry'] else None

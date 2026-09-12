@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools, knowledge
+from . import enchantments, roll_pools, knowledge, weaponry, crafting
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token
 from .alignment import schema as alignment_schema, validate_alignment
@@ -99,12 +99,15 @@ def serialize_char(c, user):
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
         d = copy.deepcopy(a.data)
-        if roll_pools.profile(a):d['manual']=False
+        if roll_pools.profile(a) or crafting.profile(a):d['manual']=False
+        d['keywords']=weaponry.keywords(a,calc)
+        if d.get('weapon'):
+            d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
         hit_bonus = enchantments.ability_bonus(calc,a,'hit') + sum(p.get('hit',0) for p in enchantments.for_ability(calc,a)) + (calc['weapon_hit'] if d.get('weapon') else 0)
         if d.get('system') and any(x.name=='Мистическая точность' for x in c.abilities.all()):
             hit_bonus += calc['mods'][calc['primary']]
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
-                          'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'enchantments':enchantments.for_ability(calc,a),
+                          'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
                           'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, not bool(roll_pools.profile(a)), calc,scene=scene),
@@ -153,7 +156,7 @@ def state(request):
                         'master': master(request.user)}, 'users': list(User.objects.values('id', 'username')) if master(request.user) else [],
                         'characters': [serialize_char(c, request.user)
                         for c in Character.objects.select_related('owner').prefetch_related('abilities', 'items', 'memberships')],
-                        'rules': {'enchantments':enchantments.catalogue(), 'alignment':alignment_schema(), 'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
+                        'rules': {'crafting':crafting.catalogue(), 'enchantments':enchantments.catalogue(), 'alignment':alignment_schema(), 'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
                         'campaigns': campaigns, 'sessions': sessions, 'scenes': scenes, 'events': visible_events,
                         'catalog': list(Entry.objects.filter(archived=False).values('id', 'kind', 'name', 'description', 'data', 'source'))})
 
@@ -353,6 +356,8 @@ def execute(user, p):
             entry.data = data
         entry.save()
         return {'id': entry.id}
+    elif op == 'craft.apply':
+        return crafting.apply(user,p)
     elif op in ['knowledge.save','knowledge.archive']:
         return knowledge.save(user,p)
     elif op.startswith('item.'):
@@ -535,6 +540,11 @@ def execute(user, p):
         if p.get('remove'): c.abilities.remove(e)
         else: c.abilities.add(e)
         c.revision+=1;c.save(update_fields=['revision'])
+    elif op == 'attack.mode':
+        c=owned(user,p['character'])
+        if p.get('mode') not in ['melee','ranged']:raise ValueError('Выберите способ атаки')
+        change=Change(user,'Способ атаки · '+c.name,current_scene(c))
+        change.watch(c).runtime['attack_mode']=p['mode'];change.finish()
     elif op in ['weapon.select','focus.select']:
         c = owned(user,p['character'])
         weapon = get_object_or_404(Item,pk=p['item'],character=c,equipped=True,quantity__gt=0,archived=False) if p.get('item') else None
@@ -578,6 +588,7 @@ def execute(user, p):
 
 def validate_entry(d):
     enchantments.validate_profile(d)
+    weaponry.validate_profile(d)
     if not isinstance(d,dict):
         raise ValueError('Параметры должны быть объектом')
     for key in ['formula', 'dice', 'stat', 'source_name']:

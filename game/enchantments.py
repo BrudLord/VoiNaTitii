@@ -92,8 +92,10 @@ def validate_profile(data):
 
 
 def ability_bonus(calc, ability, stat):
+    from .weaponry import keywords, matches_keyword
+    words=keywords(ability,calc)
     magical=not ability.data.get('weapon') and bool(for_ability({**calc,'enchantments':[{'scope':'focus'}]},ability))
     scopes={'weapon'} if ability.data.get('weapon') else {'focus'} if magical else set()
     return sum(e.get('value',0) for e in calc['effects'] if e.get('stat')==stat
                and (not e.get('ability_scope') or e['ability_scope'] in scopes)
-               and (not e.get('keyword') or e['keyword'] in ability.data.get('keywords',[])))
+               and (not e.get('keyword') or matches_keyword(e['keyword'],words)))

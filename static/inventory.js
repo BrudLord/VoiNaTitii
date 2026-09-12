@@ -1,10 +1,10 @@
-const itemTypes={currency:'Золото',weapon:'Оружие',focus:'Фокусировка',armor:'Доспех',shield:'Щит',consumable:'Расходник',other:'Прочее'};
+const itemTypes={currency:'Золото',material:'Компонент',weapon:'Оружие',focus:'Фокусировка',armor:'Доспех',shield:'Щит',consumable:'Расходник',other:'Прочее'};
 let itemDraft=null;
 function inferredItemType(item){return item?.data.item_type||(item?.name==='Золото'?'currency':item?.data.dice?'weapon':item?.data.armor?'armor':'other')}
 function itemTypeFields(type,d,item){
  const equipment=['weapon','focus','armor','shield'].includes(type);
  if(type==='currency')return input('quantity','Количество',item.quantity??0,'number','min="0" required');
- return `<div class="fields">${input('item_name','Название',item.name||'','text','required maxlength="160"')}${input('quantity','Количество',item.quantity??1,'number','min="0" required')}${type==='weapon'?input('dice','Урон оружия',d.dice||'','text','placeholder="1к6"')+selector('stat','Характеристика',Object.entries(labels).map(([id,name])=>({id,name})),d.stat||'str')+input('crit','Дополнительный Крит',d.crit||0,'number','min="0"'):''}${['armor','shield'].includes(type)?input('armor',type==='armor'?'Защита доспеха':'Защита щита',d.armor||0,'number','min="0"'):''}${equipment?input('keywords','Свойства',(d.keywords||[]).join(', '),'text','placeholder="Кинжалы, Лёгкое"'):''}</div>${textArea('description',type==='consumable'?'Эффект и применение':'Описание',d.description||'')}${equipment?`<details><summary>Дополнительные бонусы</summary><div class="fields">${[['hit','Попадание'],['damage','Урон'],['ac','КД'],['speed','Скорость'],['max_hp','Максимум ХП']].map(([stat,name])=>input('bonus_'+stat,name,d.effects?.find(e=>e.key==='item_bonus:'+stat)?.value||0,'number')).join('')}</div></details>`:''}${equipment?enchantmentFields(type,d):''}${itemDraft.charId&&equipment?`<label class="checks"><input name="equipped" type="checkbox" ${item.equipped?'checked':''}>Надето / в руках</label>`:''}`;
+ return `<div class="fields">${input('item_name','Название',item.name||'','text','required maxlength="160"')}${input('quantity','Количество',item.quantity??1,'number','min="0" required')}${type==='weapon'?input('dice','Урон оружия',d.dice||'','text','placeholder="1к6"')+selector('stat','Характеристика',Object.entries(labels).map(([id,name])=>({id,name})),d.stat||'str')+input('crit','Дополнительный Крит',d.crit||0,'number','min="0"'):''}${['armor','shield'].includes(type)?input('armor',type==='armor'?'Защита доспеха':'Защита щита',d.armor||0,'number','min="0"'):''}${type==='material'?selector('material_kind','Вид компонента',[{id:'magic_dust',name:'Магическая пыль'},{id:'elemental',name:'Стихийный'},{id:'other',name:'Прочий материал'}],d.material_kind||'other')+`<div id="material-element" ${d.material_kind!=='elemental'?'hidden':''}>${selector('element','Стихия',materialElements.map(name=>({id:name,name})),d.element)}</div>`:''}${equipment?input('keywords','Свойства',(d.keywords||[]).join(', '),'text','placeholder="Кинжалы, Лёгкое"'):''}</div>${textArea('description',type==='consumable'?'Эффект и применение':'Описание',d.description||'')}${equipment?`<details><summary>Дополнительные бонусы</summary><div class="fields">${[['hit','Попадание'],['damage','Урон'],['ac','КД'],['speed','Скорость'],['max_hp','Максимум ХП']].map(([stat,name])=>input('bonus_'+stat,name,d.effects?.find(e=>e.key==='item_bonus:'+stat)?.value||0,'number')).join('')}</div></details>`:''}${type==='weapon'?upgradeFields(d):''}${equipment?enchantmentFields(type,d):''}${itemDraft.charId&&equipment?`<label class="checks"><input name="equipped" type="checkbox" ${item.equipped?'checked':''}>Надето / в руках</label>`:''}`;
 }
 // Replace the old all-fields form with type-specific fields; catalogue metadata is retained.
 function itemForm(item=null,charId=null,campId=null){
@@ -13,16 +13,19 @@ function itemForm(item=null,charId=null,campId=null){
   const f=formObject(),type=f.item_type;if(!itemTypes[type])throw Error('Выберите тип предмета');
   const equipment=['weapon','focus','armor','shield'].includes(type);
   const data={...itemDraft.data,item_type:type,description:f.description||''};
+  delete data.material_kind;delete data.element;
+  if(type==='material'){data.material_kind=f.material_kind||'other';data.element=f.material_kind==='elemental'?f.element:''}
   for(const key of ['dice','crit','armor','stat'])delete data[key];
   if(type==='weapon')Object.assign(data,{dice:f.dice||'',crit:num(f.crit),stat:f.stat||'str'});
   if(['armor','shield'].includes(type))data.armor=num(f.armor);
   if(equipment){
+   data.upgrades=type==='weapon'?[...dialogBody.querySelectorAll('[name=upgrades]:checked')].map(e=>num(e.value)):[];
    data.enchantments=[...dialogBody.querySelectorAll('[name=enchantments]:checked')].map(e=>num(e.value));
    data.keywords=(f.keywords||'').split(',').map(s=>s.trim()).filter(Boolean);
    const schools=S.catalog.filter(e=>e.kind==='school').map(e=>e.name);data.families=data.keywords.filter(k=>schools.includes(k));
    data.effects=(data.effects||[]).filter(e=>!String(e.key||'').startsWith('item_bonus:'));
    for(const stat of ['hit','damage','ac','speed','max_hp'])if(num(f['bonus_'+stat]))data.effects.push({key:'item_bonus:'+stat,stat,value:num(f['bonus_'+stat])});
-  }else{delete data.enchantments;delete data.effects;delete data.keywords;delete data.families}
+  }else{delete data.upgrades;delete data.enchantments;delete data.effects;delete data.keywords;delete data.families}
   await api({op:'item.save',id:item?.id,revision:item?.revision,character:charId,campaign:campId,entry:type==='currency'?null:itemDraft.entryId,name:type==='currency'?'Золото':f.item_name,quantity:num(f.quantity),slot:item?.slot||'',equipped:equipment&&!!f.equipped,data:type==='currency'?{item_type:'currency'}:data});
  });
 }

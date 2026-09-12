@@ -752,3 +752,103 @@ class GameTests(TestCase):
                                  data={'dice':'1к6','armor':4,'effects':[{'stat':'hit','value':20}]})
         calc=computed(self.a);self.assertEqual(calc['hit'],0);self.assertEqual(calc['ac'],5);self.assertTrue(calc['unarmed'])
         self.post(self.alice,{'op':'weapon.select','character':self.a.id,'item':item.id},404)
+
+    def prepare_crafter(self,name,recipe):
+        craft=Entry.objects.create(kind='craft',name=name)
+        self.a.info['craft_ids']=[craft.id];self.a.abilities.add(recipe);self.a.save()
+
+    def test_enchanting_consumes_materials_and_splits_one_item_atomically(self):
+        fire=self.charm('Малое зачарование огня');self.prepare_crafter('Зачарователь',fire)
+        target=Item.objects.create(character=self.a,name='Кинжал',quantity=3,data={'item_type':'weapon','dice':'1к4','families':['Кинжалы']})
+        dust=Item.objects.create(character=self.a,name='Пыль',quantity=100,data={'item_type':'material','material_kind':'magic_dust'})
+        component=Item.objects.create(campaign=self.campaign,name='Огненный камень',quantity=2,data={'item_type':'material','material_kind':'elemental','element':'Огонь'})
+        p={'op':'craft.apply','character':self.a.id,'recipe':fire.id,'item':target.id,'item_revision':1,
+           'supplies':[{'item':dust.id,'revision':1,'quantity':50,'role':'dust'},{'item':component.id,'revision':1,'quantity':1,'role':'component'}]}
+        result=self.post(self.alice,p);made=Item.objects.get(pk=result['id'])
+        target.refresh_from_db();dust.refresh_from_db();component.refresh_from_db()
+        self.assertEqual((target.quantity,made.quantity,dust.quantity,component.quantity),(2,1,50,1))
+        self.assertEqual(made.data['enchantments'],[fire.id]);self.assertNotEqual(made.id,target.id)
+        self.post(self.alice,{'op':'undo'});target.refresh_from_db();dust.refresh_from_db();made.refresh_from_db();component.refresh_from_db()
+        self.assertEqual((target.quantity,dust.quantity,component.quantity),(3,100,2));self.assertTrue(made.archived)
+        self.post(self.alice,{'op':'redo'});made.refresh_from_db();self.assertFalse(made.archived)
+        self.post(self.bob,{'op':'item.consume','id':component.id,'quantity':1})
+        self.post(self.alice,{'op':'undo'},400)
+
+    def test_crafting_rejects_short_supplies_wrong_element_and_stale_stock(self):
+        fire=self.charm('Малое зачарование огня');self.prepare_crafter('Зачарователь',fire)
+        target=Item.objects.create(character=self.a,name='Клинок',data={'item_type':'weapon','dice':'1к6'})
+        dust=Item.objects.create(character=self.a,name='Пыль',quantity=100,data={'material_kind':'magic_dust'})
+        wrong=Item.objects.create(character=self.a,name='Водный камень',quantity=2,data={'material_kind':'elemental','element':'Вода'})
+        p={'op':'craft.apply','character':self.a.id,'recipe':fire.id,'item':target.id,'item_revision':1,'supplies':[]}
+        self.post(self.alice,p,400)
+        self.post(self.alice,{**p,'supplies':[{'item':dust.id,'revision':1,'quantity':50,'role':'dust'},{'item':wrong.id,'revision':1,'quantity':1,'role':'component'}]},400)
+        self.post(self.alice,{**p,'item_revision':0},400)
+        self.post(self.bob,p,403)
+        dust.refresh_from_db();self.assertEqual(dust.quantity,100);self.assertEqual(Event.objects.count(),0)
+
+    def test_weaponsmith_bonuses_and_range_are_applied_to_selected_weapon(self):
+        from .views import serialize_char
+        balanced=self.charm('Сбалансированный');heavy=self.charm('Утяжеленный');taut=self.charm('Тугой');piercing=self.charm('Пробивающий')
+        self.prepare_crafter('Оружейник',balanced);self.a.abilities.add(heavy,taut,piercing)
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'formula':'1Ор','damage':True,'keywords':['Оружие','Ближний']})
+        for name,family,recipe,expected_hit,expected_crit,expected_range,armored in [
+            ('Меч','Мечи',balanced,1,0,'Ближний',None),('Топор','Топоры',heavy,0,1,'Ближний',None),
+            ('Лук','Луки',taut,0,0,'Дальнобойный 15',None),('Молот','Молоты',piercing,0,0,'Ближний',1)]:
+            item=Item.objects.create(character=self.a,name=name,equipped=True,data={'item_type':'weapon','dice':'1к6','families':[family],'keywords':[family]+(['Дальнобойный 10'] if family=='Луки' else [])})
+            self.post(self.alice,{'op':'craft.apply','character':self.a.id,'recipe':recipe.id,'item':item.id,'item_revision':1})
+            self.a.runtime['weapon_id']=item.id;self.a.save()
+            calc=computed(self.a);row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.id)
+            self.assertEqual(row['hit_bonus'],expected_hit);self.assertEqual(calc['crit'],expected_crit)
+            self.assertEqual(row['data']['range'],expected_range);self.assertEqual(row['armored_hit_bonus'],armored)
+            if expected_crit:self.assertEqual(row['critical'],'3к6')
+            item.refresh_from_db()
+            self.post(self.alice,{'op':'craft.apply','character':self.a.id,'recipe':recipe.id,'item':item.id,'item_revision':item.revision},400)
+
+    def test_ranged_and_thrown_standard_attacks_do_not_get_melee_boulder(self):
+        boulder=self.charm('Глыба');boulder.data={'category':'passive','stat':'wis'};boulder.save();self.a.abilities.add(boulder)
+        self.a.stats['wis']=16;self.a.save()
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'formula':'1Ор','damage':True,'keywords':['Ближний']})
+        item=Item.objects.create(character=self.a,name='Лук',equipped=True,data={'item_type':'weapon','dice':'1к6','keywords':['Дальнобойный 10']})
+        self.assertEqual(formula(self.a,attack),'1к6')
+        item.data={'item_type':'weapon','dice':'1к4','keywords':['Метательное 5']};item.save()
+        self.assertEqual(formula(self.a,attack),'1к4 +3 [Земля]')
+        self.post(self.alice,{'op':'attack.mode','character':self.a.id,'mode':'ranged'})
+        self.a.refresh_from_db();self.assertEqual(formula(self.a,attack),'1к4')
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(formula(self.a,attack),'1к4 +3 [Земля]')
+
+    def test_crafting_requires_known_recipe_and_selected_craft(self):
+        balanced=self.charm('Сбалансированный')
+        target=Item.objects.create(character=self.a,name='Меч',data={'item_type':'weapon','dice':'1к6','families':['Мечи']})
+        p={'op':'craft.apply','character':self.a.id,'recipe':balanced.id,'item':target.id,'item_revision':1}
+        self.post(self.alice,p,400)
+        self.prepare_crafter('Оружейник',balanced)
+        self.start();self.post(self.alice,p,400)
+
+    def test_weapon_upgrade_validation_and_material_types(self):
+        balanced=self.charm('Сбалансированный')
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Лук','data':{'item_type':'weapon','families':['Луки'],'upgrades':[balanced.id]}},400)
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Камень','data':{'item_type':'material','material_kind':'elemental','element':'Нет такой'}},400)
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Пыль','quantity':50,'data':{'item_type':'material','material_kind':'magic_dust'}})
+
+    def test_material_cannot_be_equipped_and_custom_upgrade_profile(self):
+        result=self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Пыль','quantity':50,'equipped':True,'data':{'item_type':'material','material_kind':'magic_dust'}})
+        item=Item.objects.get(pk=result['id']);self.assertFalse(item.equipped)
+        self.post(self.alice,{'op':'item.equip','id':item.id},400)
+        p={'op':'entry.save','kind':'ability','name':'Особая ковка','data':{'weapon_upgrade':{'families':['Мечи'],'hit':2}}}
+        self.post(self.gm,p)
+        custom=Entry.objects.get(name='Особая ковка');self.prepare_crafter('Оружейник',custom)
+        weapon=Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6','families':['Мечи']})
+        self.post(self.alice,{'op':'craft.apply','character':self.a.id,'recipe':custom.id,'item':weapon.id,'item_revision':weapon.revision})
+        self.assertEqual(computed(self.a)['hit'],2)
+        self.post(self.gm,{**p,'data':{'weapon_upgrade':{'families':['Мечи'],'hit':'bad'}}},400)
+
+    def test_keyword_bonuses_follow_standard_attack_range(self):
+        from .views import serialize_char
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'formula':'1Ор','damage':True,'keywords':['Ближний']})
+        Item.objects.create(character=self.a,name='Кинжал',equipped=True,data={'item_type':'weapon','dice':'1к4','keywords':['Метательное 5']})
+        self.a.runtime['effects']=[{'key':'melee-hit','stat':'hit','keyword':'Ближний','value':2},{'key':'melee-damage','stat':'damage','keyword':'Ближний','value':4},{'key':'ranged-hit','stat':'hit','keyword':'Дальнобойный','value':3}];self.a.save()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.id)
+        self.assertEqual(row['hit_bonus'],2);self.assertEqual(row['formula'],'1к4 +4')
+        self.post(self.alice,{'op':'attack.mode','character':self.a.id,'mode':'ranged'});self.a.refresh_from_db()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.id)
+        self.assertEqual(row['hit_bonus'],3);self.assertEqual(row['formula'],'1к4');self.assertEqual(row['data']['range'],'Дальнобойный 5')

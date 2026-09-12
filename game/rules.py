@@ -24,7 +24,10 @@ def computed(c):
     selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
     from .enchantments import equipment
     enchantments, focus_id = equipment(c, equipped, selected)
+    from .weaponry import upgrades
+    weapon_upgrades=upgrades(selected) if selected else []
     effects = list(c.runtime.get('effects', []))
+    effects.extend({'stat':'hit','value':p['hit'],'ability_scope':'weapon'} for p in weapon_upgrades if p.get('hit'))
     effects.extend({'stat':'speed','value':p['speed']} for p in enchantments if p.get('speed'))
     effects.extend({**e,**({'ability_scope':'weapon' if i.data.get('dice') else 'focus'} if (i.data.get('dice') or i.data.get('item_type')=='focus') and e.get('stat') in ['hit','damage'] else {})} for i in equipped for e in i.data.get('effects',[])
                    if not ((i.data.get('dice') and i!=selected or i.data.get('item_type')=='focus' and i.id!=focus_id) and e.get('stat') in ['hit','damage']))
@@ -51,7 +54,7 @@ def computed(c):
     weapon_proficient = False
     weapon_hit = 0
     weapon_school = primary
-    crit = 0
+    crit = sum(p.get('crit',0) for p in weapon_upgrades)
     school_ids = [c.info.get('school_id'),c.info.get('secondary_school_id')] + c.info.get('additional_school_ids',[])
     trained = {e.name for e in Entry.objects.filter(pk__in=[x for x in school_ids if str(x).isdigit()],kind='school')}
     for item in equipped:
@@ -90,6 +93,10 @@ def computed(c):
             'enchantments':enchantments, 'focus_id':focus_id,
             'initiative':mods['dex'] + sum(p.get('initiative',0) for p in enchantments),
             'forced_movement_reduction':sum(p.get('forced_movement_reduction',0) for p in enchantments),
+            'weapon_keywords':selected.data.get('keywords',[]) if selected else [],
+            'weapon_range_bonus':sum(p.get('range',0) for p in weapon_upgrades),
+            'armored_hit':sum(p.get('armored_hit',0) for p in weapon_upgrades),
+            'attack_mode':c.runtime.get('attack_mode','melee'),
             'weapon_stat': weapon_school, 'weapon': weapon, 'crit': crit,
             'weapon_id':weapon_item,'weapon_proficient':weapon_proficient,'weapon_hit':weapon_hit,
             'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
