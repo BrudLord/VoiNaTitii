@@ -569,3 +569,54 @@ class GameTests(TestCase):
         self.post(self.gm,{'op':'entry.save','kind':'ability','name':'Свои чары','data':{'enchantment':{'types':['weapon'],'damage':2}}})
         custom=Entry.objects.get(name='Свои чары')
         self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Клинок','quantity':1,'data':{'item_type':'weapon','enchantments':[custom.id]}})
+
+    def test_ritual_pool_waits_validates_cleanses_and_master_controls_hp(self):
+        ritual=Entry.objects.create(kind='ability',name='Ритуал восстановления',data={'action':'main','circle':3,'rolls':True})
+        self.a.level=8;self.a.abilities.add(ritual);self.a.runtime['hp']=10;self.a.save()
+        self.b.runtime.update(hp=10,effects=[{'key':'poison','name':'Яд','stat':'status','value':2,'duration':'turns','remaining':3}]);self.b.save()
+        self.start()
+        p={'op':'ability.use','character':self.a.id,'ability':ritual.id,'outcome':'hit',
+           'dice':[2]*9,'allocations':[{'character':self.a.id,'hp':5},{'character':self.b.id,'hp':8,'remove':['poison']}]}
+        self.post(self.alice,{**p,'dice':[2]*8},400)
+        self.post(self.alice,{**p,'allocations':[{'character':self.a.id,'hp':19}]},400)
+        self.post(self.alice,{**p,'allocations':[{'character':self.b.id,'hp':0,'remove':['gone']}]},400)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertEqual(self.b.runtime['effects'],[])
+        self.assertEqual(self.a.runtime['hp'],10);self.assertEqual(self.b.runtime['hp'],10)
+        key=next(iter(self.a.runtime['pending_heals']))
+        confirm={'op':'healing.confirm','character':self.a.id,'pending':key}
+        self.post(self.alice,confirm,403)
+        self.post(self.gm,confirm);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['hp'],15);self.assertEqual(self.b.runtime['hp'],18)
+        self.post(self.gm,confirm,400)
+        self.post(self.alice,{'op':'undo'},400)
+        self.post(self.gm,{'op':'undo'});self.post(self.alice,{'op':'undo'})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertEqual(self.b.runtime['effects'][0]['key'],'poison')
+        self.assertFalse(self.a.runtime.get('pending_heals'))
+        self.post(self.alice,{'op':'redo'});self.post(self.gm,{'op':'redo'})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],15)
+
+    def test_heavens_assigns_whole_odd_dice_and_keeps_monster_damage_external(self):
+        a=Entry.objects.create(kind='ability',name='Исход небес',data={'action':'main','circle':2,'rolls':True})
+        self.a.level=8;self.a.abilities.add(a);self.a.save();self.start()
+        p={'op':'ability.use','character':self.a.id,'ability':a.id,'outcome':'hit','dice':[1,2,3,4,5,6],
+           'dice_targets':[self.a.id,None,self.b.id,None,self.b.id,None]}
+        self.post(self.alice,{**p,'dice_targets':[self.a.id,self.a.id,self.b.id,None,self.b.id,None]},400)
+        self.post(self.alice,{**p,'outcome':'critical'},400)
+        self.post(self.alice,p)
+        pool=Event.objects.latest('id').inputs['roll_pool']
+        self.assertEqual(pool['damage_pool'],12);self.assertEqual(pool['healing_pool'],9)
+        self.assertEqual(pool['allocations'],[{'character':self.a.id,'hp':1,'remove':[]},{'character':self.b.id,'hp':8,'remove':[]}])
+
+    def test_end_battle_discards_pending_healing_and_undo_restores_it(self):
+        a=Entry.objects.create(kind='ability',name='Ритуал восстановления',data={'action':'main','rolls':True})
+        self.a.abilities.add(a);scene=self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':a.id,'dice':[1]*9,'allocations':[{'character':self.b.id,'hp':9}]})
+        self.a.refresh_from_db();key=next(iter(self.a.runtime['pending_heals']))
+        self.post(self.gm,{'op':'scene.end','scene':scene.id,'version':scene.state})
+        self.post(self.gm,{'op':'healing.confirm','character':self.a.id,'pending':key},400)
+        self.post(self.gm,{'op':'undo'})
+        self.post(self.gm,{'op':'healing.confirm','character':self.a.id,'pending':key})
+        self.b.refresh_from_db();self.assertLessEqual(self.b.runtime['hp'],computed(self.b)['max_hp'])

@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments
+from . import enchantments, roll_pools
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token
 from .alignment import schema as alignment_schema, validate_alignment
@@ -98,15 +98,16 @@ def serialize_char(c, user):
     learned = {a.id:a for a in c.abilities.all()}
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
-        d = a.data
+        d = copy.deepcopy(a.data)
+        if roll_pools.profile(a):d['manual']=False
         hit_bonus = enchantments.ability_bonus(calc,a,'hit') + sum(p.get('hit',0) for p in enchantments.for_ability(calc,a)) + (calc['weapon_hit'] if d.get('weapon') else 0)
         if d.get('system') and any(x.name=='Мистическая точность' for x in c.abilities.all()):
             hit_bonus += calc['mods'][calc['primary']]
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
-                          'hit_bonus': hit_bonus, 'enchantments':enchantments.for_ability(calc,a),
+                          'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
-                          'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, True, calc,scene=scene),
+                          'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, not bool(roll_pools.profile(a)), calc,scene=scene),
                           'damage_contributions':boulder_bonus(c,a,calc,scene),
                           'rolls_required': rolls_required(a) or bool(a.data.get('weapon'))})
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
@@ -414,7 +415,7 @@ def execute(user, p):
         if op == 'scene.end':
             scene.state['active'] = False
             for c in chars.values():
-                c.runtime.update(enchantment_uses={},effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
+                c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
                 c.runtime['hp'] = computed(c)['max_hp']
         else:
             c = chars[current.id]
@@ -494,6 +495,21 @@ def execute(user, p):
         Change(user,'Проверка '+skill+' · '+c.name,current_scene(c),
                inputs={'roll_result':str(roll),'bonus':bonus,'total':roll+bonus,'specialization':str(p.get('specialization',''))[:160]}).finish(record=True)
         return {'total':roll+bonus,'bonus':bonus}
+    elif op == 'healing.confirm':
+        require_master(user)
+        c=get_object_or_404(Character,pk=p['character'])
+        pending=c.runtime.get('pending_heals',{}).get(p.get('pending'))
+        scene=current_scene(c)
+        if not pending or not scene or pending['scene']!=scene.id:
+            raise ValueError('Лечение уже внесено, отменено или бой закончился')
+        change=Change(user,'Лечение по броску · '+pending['name'],scene,inputs=pending)
+        change.watch(c)
+        targets={t.id:t for t in Character.objects.filter(id__in=scene.state['order'])};targets[c.id]=c
+        for row in pending['allocations']:
+            t=change.watch(targets[row['character']])
+            t.runtime['hp']=min(computed(t)['max_hp'],t.runtime.get('hp',0)+row['hp'])
+        del c.runtime['pending_heals'][p['pending']]
+        change.finish()
     elif op == 'enchantment.kill':
         c=owned(user,p['character'])
         scene=current_scene(c)
@@ -691,9 +707,12 @@ def use_ability(user, p):
         reason = availability(c, a, scene)
         if reason:
             raise ValueError(reason)
-        needs_roll = rolls_required(a) or bool(a.data.get('weapon'))
+        needs_roll = (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
         if needs_roll and not str(p.get('roll_result', '')).strip():
             raise ValueError('Введите результат физического броска. Действие пока не применено.')
+    pool_targets={t.id:t for t in Character.objects.filter(id__in=scene.state['order'])}
+    pool=roll_pools.resolve(a,p,pool_targets) if not aura else None
+    if pool and p.get('outcome','hit')!='hit':raise ValueError('Для этого умения используется распределение, без броска попадания')
     ids = list(dict.fromkeys(int(i) for i in p.get('targets', [])))
     if any(i not in scene.state['order'] for i in ids):
         raise ValueError('Выберите участников текущего боя')
@@ -704,6 +723,16 @@ def use_ability(user, p):
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
+    if pool:
+        change.inputs['roll_pool']=pool
+        change.inputs['roll_result']=', '.join(str(v) for v in pool['dice'])
+        for row in pool['allocations']:
+            target=c if row['character']==c.id else pool_targets[row['character']]
+            change.watch(target)
+            target.runtime['effects']=[e for e in target.runtime.get('effects',[]) if e['key'] not in row['remove']]
+        healing=[{'character':r['character'],'hp':r['hp']} for r in pool['allocations'] if r['hp']]
+        if healing:
+            c.runtime.setdefault('pending_heals',{})[str(uuid.uuid4())]={'scene':scene.id,'name':a.name,'allocations':healing,'dice':pool['dice']}
     if not aura and p.get('outcome')!='miss':
         contributions=boulder_bonus(c,a,computed(c),scene)
         change.inputs['damage_contributions']=contributions
@@ -717,7 +746,7 @@ def use_ability(user, p):
         if not (p.get('outcome') == 'miss' and d.get('reliable')):
             used = c.runtime.setdefault('used', {})
             used[str(a.id)] = used.get(str(a.id), 0) + 1
-    targets = {x.id: x for x in Character.objects.filter(id__in=scene.state['order'])}
+    targets = pool_targets
     targets[c.id] = c
     if aura:
         for t in targets.values():
