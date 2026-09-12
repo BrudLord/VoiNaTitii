@@ -495,17 +495,17 @@ def execute(user, p):
         Change(user,'Проверка '+skill+' · '+c.name,current_scene(c),
                inputs={'roll_result':str(roll),'bonus':bonus,'total':roll+bonus,'specialization':str(p.get('specialization',''))[:160]}).finish(record=True)
         return {'total':roll+bonus,'bonus':bonus}
-    elif op == 'healing.confirm':
+    elif op in ['healing.confirm','healing.dismiss']:
         require_master(user)
         c=get_object_or_404(Character,pk=p['character'])
         pending=c.runtime.get('pending_heals',{}).get(p.get('pending'))
         scene=current_scene(c)
         if not pending or not scene or pending['scene']!=scene.id:
             raise ValueError('Лечение уже внесено, отменено или бой закончился')
-        change=Change(user,'Лечение по броску · '+pending['name'],scene,inputs=pending)
+        change=Change(user,('Лечение по броску · ' if op=='healing.confirm' else 'Лечение учтено вручную · ')+pending['name'],scene,inputs=pending)
         change.watch(c)
         targets={t.id:t for t in Character.objects.filter(id__in=scene.state['order'])};targets[c.id]=c
-        for row in pending['allocations']:
+        for row in pending['allocations'] if op=='healing.confirm' else []:
             t=change.watch(targets[row['character']])
             t.runtime['hp']=min(computed(t)['max_hp'],t.runtime.get('hp',0)+row['hp'])
         del c.runtime['pending_heals'][p['pending']]

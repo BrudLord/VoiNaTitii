@@ -21,10 +21,10 @@ function rollPoolForm(a){
 }
 function pendingHealing(){
  const rows=S.characters.flatMap(c=>Object.entries(c.runtime.pending_heals||{}).map(([key,p])=>({c,key,p})));
- return rows.length?`<section><h2>Лечение по броскам</h2>${rows.map(({c,key,p})=>`<article class="card"><h3>${esc(p.name)} · ${esc(c.name)}</h3><p>Кубики: ${p.dice.join(', ')}</p>${p.allocations.map(r=>`<p>${esc(byId(S.characters,r.character)?.name)}: +${r.hp} ХП</p>`).join('')}${btn('Внести лечение','healing.confirm',`data-character="${c.id}" data-pending="${esc(key)}"`)}</article>`).join('')}</section>`:'';
+ return rows.length?`<section><h2>Лечение по броскам</h2>${rows.map(({c,key,p})=>`<article class="card"><h3>${esc(p.name)} · ${esc(c.name)}</h3><p>Кубики: ${p.dice.join(', ')}</p>${p.allocations.map(r=>`<p>${esc(byId(S.characters,r.character)?.name)}: +${r.hp} ХП</p>`).join('')}${btn('Внести лечение','healing.confirm',`data-character="${c.id}" data-pending="${esc(key)}"`)}${btn('Уже учтено вручную','healing.dismiss',`data-character="${c.id}" data-pending="${esc(key)}"`)}</article>`).join('')}</section>`:'';
 }
 document.addEventListener('click',async e=>{
- const b=e.target.closest('[data-do="healing.confirm"]');if(!b)return;
- try{await command({op:'healing.confirm',character:num(b.dataset.character),pending:b.dataset.pending})}catch(err){toast(err.message)}
+ const b=e.target.closest('[data-do="healing.confirm"],[data-do="healing.dismiss"]');if(!b)return;
+ try{await command({op:b.dataset.do,character:num(b.dataset.character),pending:b.dataset.pending})}catch(err){toast(err.message)}
 });
 function rollPoolLog(pool){return pool?`<br>Запас лечения: ${pool.healing_pool} · Осталось: ${pool.unused}${pool.damage_pool?' · Урон Светом противникам: '+pool.damage_pool:''}${pool.allocations.map(r=>'<br>'+esc(byId(S.characters,r.character)?.name)+': лечение '+r.hp+(r.remove.length?', снятие эффектов: '+r.remove.length:'')).join('')}`:''}

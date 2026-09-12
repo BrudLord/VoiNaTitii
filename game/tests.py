@@ -620,3 +620,14 @@ class GameTests(TestCase):
         self.post(self.gm,{'op':'undo'})
         self.post(self.gm,{'op':'healing.confirm','character':self.a.id,'pending':key})
         self.b.refresh_from_db();self.assertLessEqual(self.b.runtime['hp'],computed(self.b)['max_hp'])
+
+    def test_master_can_dismiss_already_manually_applied_healing(self):
+        a=Entry.objects.create(kind='ability',name='Ритуал восстановления',data={'action':'main','rolls':True})
+        self.a.abilities.add(a);self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':a.id,'dice':[1]*9,'allocations':[{'character':self.b.id,'hp':9}]})
+        self.a.refresh_from_db();key=next(iter(self.a.runtime['pending_heals']))
+        self.b.refresh_from_db();hp=self.b.runtime['hp']
+        self.post(self.alice,{'op':'healing.dismiss','character':self.a.id,'pending':key},403)
+        self.post(self.gm,{'op':'healing.dismiss','character':self.a.id,'pending':key})
+        self.a.refresh_from_db();self.b.refresh_from_db();self.assertFalse(self.a.runtime['pending_heals']);self.assertEqual(self.b.runtime['hp'],hp)
+        self.post(self.gm,{'op':'undo'});self.a.refresh_from_db();self.assertIn(key,self.a.runtime['pending_heals'])
