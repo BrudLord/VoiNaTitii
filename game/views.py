@@ -116,6 +116,7 @@ def serialize_char(c, user):
                           'attack_setup':setup, 'charged_arrows':charged,
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
                           'weavable':weaving.magical(a),'weaving_area':weaving.area(a),
+                          'physical_weapon_units':targeting.physical_weapon_units(a,calc),
                           'hit_scope':'weapon' if d.get('weapon') else 'focus' if enchantments.for_ability({**calc,'enchantments':[{'scope':'focus'}]},a) else '',
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else

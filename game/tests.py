@@ -2449,3 +2449,41 @@ class GameTests(TestCase):
         self.b.refresh_from_db();self.assertEqual((self.b.runtime['effects'][0]['value'],self.b.runtime['effects'][0]['remaining']),(5,3))
         self.post(self.alice,{'op':'undo'});self.b.refresh_from_db()
         self.assertEqual((self.b.runtime['effects'][0]['value'],self.b.runtime['effects'][0]['remaining']),(2,1))
+
+    def test_superconductor_target_formula_uses_physical_weapon_units_and_not_critical_dice(self):
+        from .targeting import resolve
+        ability=Entry.objects.create(kind='ability',name='Удар',description='Цель получает 2Ор+Мод Физического урона.',data={'weapon':True,'damage':True,'formula':'2Ор+Мод'})
+        Item.objects.create(character=self.a,name='Клинок',equipped=True,data={'item_type':'weapon','dice':'2к4','no_proficiency':True})
+        self.b.runtime['effects']=[{'key':'conductor','status':'Сверхпроводник','value':3,'duration':'turns','remaining':3}]
+        for outcome in ['hit','critical']:
+            row=resolve(self.a,ability,computed(self.a),[self.b],{'outcome':outcome})[0]
+            self.assertEqual(row['conductor_damage'],3)
+            self.assertIn('+3 [Сверхпроводник]',row['damage'])
+        ability.data['damage_type']='Огонь'
+        self.assertEqual(resolve(self.a,ability,computed(self.a),[self.b],{})[0]['conductor_damage'],0)
+        ability.data['damage_type']='Физический';ability.data['formula']='1Ор'
+        self.assertEqual(resolve(self.a,ability,computed(self.a),[self.b],{})[0]['conductor_damage'],1.5)
+
+    def test_superconductor_external_target_validation_and_unarmed_exclusion(self):
+        from .targeting import resolve, physical_weapon_units
+        from .views import serialize_char
+        ability=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор+Мод'})
+        self.assertEqual(physical_weapon_units(ability,computed(self.a)),0)
+        Item.objects.create(character=self.a,name='Клинок',equipped=True,data={'item_type':'weapon','dice':'1к6','no_proficiency':True})
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==ability.pk)
+        self.assertEqual(row['physical_weapon_units'],1)
+        self.assertEqual(resolve(self.a,ability,computed(self.a),[],{'external_conductor':4})[0]['conductor_damage'],2)
+        for payload,targets in [({'external_conductor':-1},[]),({'external_conductor':True},[]),({'external_conductor':4},[self.b])]:
+            with self.assertRaises(ValueError):resolve(self.a,ability,computed(self.a),targets,payload)
+
+    def test_superconductor_attack_captures_preexisting_effect_and_undo(self):
+        scene=self.start();self.b.refresh_from_db()
+        self.b.runtime['effects']=[{'key':'conductor','status':'Сверхпроводник','value':4,'duration':'turns','remaining':3}];self.b.save()
+        Item.objects.create(character=self.a,name='Клинок',equipped=True,data={'item_type':'weapon','dice':'1к6','no_proficiency':True})
+        ability=Entry.objects.create(kind='ability',name='Удар',description='Цель получает 2Ор Физического урона.',data={'weapon':True,'damage':True,'formula':'2Ор','action':'main','circle':0})
+        self.a.abilities.add(ability)
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.b.pk],'outcome':'hit','roll_result':'14'})
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertEqual(row['conductor_damage'],4)
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)

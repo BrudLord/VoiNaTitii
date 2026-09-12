@@ -1,5 +1,22 @@
 """Attack totals before effects of the current attack are applied."""
+import re
 from . import enchantments
+
+
+def physical_weapon_units(ability,calc):
+    """Only physical weapon terms; elemental riders never increase this coefficient."""
+    d=ability.data
+    if not d.get('weapon') or calc.get('unarmed'):return 0
+    formula=d.get('formula','')
+    if d.get('damage_type'):
+        return sum(int(n) for n in re.findall(r'(\d+)\s*Ор',formula)) if d['damage_type']=='Физический' else 0
+    if d.get('system') or ability.name in ['Стандартная атака','Провоцированная атака']:
+        return sum(int(n) for n in re.findall(r'(\d+)\s*Ор',formula))
+    # Match the selected formula, so a conditional alternative in the description
+    # cannot silently increase damage in the base attack.
+    terms=re.findall(r'(\d+)\s*Ор(?:\s*[+−-]\s*(?:\d+\s*\*?\s*)?Мод)?\s+Физического урона',ability.description,re.I)
+    units=sum(int(n) for n in re.findall(r'(\d+)\s*Ор',formula))
+    return units if str(units) in terms else 0
 
 
 def hit_bonus(character, ability, calc):
@@ -13,6 +30,9 @@ def hit_bonus(character, ability, calc):
 
 def resolve(character,ability,calc,targets,payload):
     if not (ability.data.get('damage') or ability.data.get('weapon')):return []
+    conductor=payload.get('external_conductor',0)
+    if type(conductor) is not int or not 0<=conductor<=1000 or (targets and conductor):
+        raise ValueError('Сила Сверхпроводника выбранной цели берётся из её эффектов')
     external=payload.get('external_bp',0)
     if type(external) is not int or not 0<=external<=1000:
         raise ValueError('БП противника должно быть целым числом от 0 до 1000')
@@ -34,11 +54,13 @@ def resolve(character,ability,calc,targets,payload):
         effects=computed(target)['effects'] if target else []
         bp=max((max(0,e.get('value',0)) for e in effects if status_name(e)=='БП'),default=0) if target else payload.get('external_bp',0)
         extra=bp if ability.data.get('damage_from_bp') else 0
+        strength=max((abs(e.get('value',0)) for e in effects if status_name(e)=='Сверхпроводник'),default=0) if target else conductor
+        conductor_bonus=strength*physical_weapon_units(ability,calc)/2
         damage=formula(character,ability,payload.get('outcome')=='critical',calc)
         bonus=enchantments.ability_bonus({**calc,'effects':effects},ability,'target_hit') if target else external
         result.append({'id':target.pk if target else None,'name':target.name if target else 'Цель на игровом поле',
-                       'hit':base+bonus,'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,
-                       'damage':damage+(f' +{extra} [БП]' if extra else ''),
+                       'hit':base+bonus,'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
+                       'damage':damage+(f' +{extra} [БП]' if extra else '')+(f' +{conductor_bonus:g} [Сверхпроводник]' if conductor_bonus else ''),
                        'armored_hit':base+bonus+calc['armored_hit'] if ability.data.get('weapon') and calc['armored_hit'] else None})
     return result
 
