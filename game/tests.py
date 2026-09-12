@@ -3181,3 +3181,39 @@ class GameTests(TestCase):
         rows={name:data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text())}
         self.assertEqual(rows['Элементальная сфера']['elemental_sphere'],{'strength':1})
         self.assertFalse(rows['Элементальная сфера']['manual'])
+
+    def ice_movement_setup(self):
+        self.start()
+        self.post(self.gm,{'op':'effect.apply','character':self.b.pk,'name':'Чистые льды','value':3,'turns':3})
+        self.b.refresh_from_db()
+        return {'op':'action.move','character':self.a.pk,'mode':'walk','cells':4,'cell_cost':1,'terrain':[{'source':self.b.pk,'cells':1}]}
+
+    def test_clean_ice_mixed_path_uses_area_strength_and_undo(self):
+        p=self.ice_movement_setup()
+        self.post(self.alice,{**p,'cells':5},400)
+        self.post(self.alice,p)
+        event=Event.objects.latest('id');row=event.inputs['movement']
+        self.assertEqual((row['cells'],row['limit'],row['total_cost']),(4,4,6))
+        self.assertEqual(row['terrain'][0]['cell_cost'],3)
+        self.assertIn('character:'+str(self.b.pk),event.inputs['dependencies'])
+        self.a.refresh_from_db();self.assertEqual((self.a.runtime['hp'],self.a.runtime['actions']['move']),(10,0))
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['move'],1)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['move'],0)
+
+    def test_clean_ice_blocks_step_and_invalid_or_expired_areas(self):
+        p=self.ice_movement_setup();count=Event.objects.count()
+        self.post(self.alice,{**p,'mode':'step','cells':1},400)
+        for rows in [[{'source':self.b.pk,'cells':5}],[{'source':self.b.pk,'cells':True}],[{'source':self.b.pk,'cells':0}],
+                     [{'source':999999,'cells':1}],[{'source':self.b.pk,'cells':1}]*2,{'source':self.b.pk}]:
+            self.post(self.alice,{**p,'terrain':rows},400)
+        self.b.runtime['effects']=[];self.b.save();self.post(self.alice,p,400)
+        self.assertEqual(Event.objects.count(),count)
+
+    def test_clean_ice_multiple_areas_and_other_terrain_use_cost_of_each_segment(self):
+        p=self.ice_movement_setup();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'ice','status':'Чистые льды','value':2}];self.a.save()
+        self.post(self.alice,{**p,'cells':3,'terrain':[{'source':self.b.pk,'cells':1},{'source':self.a.pk,'cells':1}]})
+        self.assertEqual(Event.objects.latest('id').inputs['movement']['total_cost'],6)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'cells':1,'cell_cost':4})
+        self.assertEqual(Event.objects.latest('id').inputs['movement']['total_cost'],4)
