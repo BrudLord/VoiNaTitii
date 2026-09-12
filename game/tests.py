@@ -682,3 +682,67 @@ class GameTests(TestCase):
         for invalid in [{'title':''},{'kind':'unknown'},{'private':'true'},{'tags':['x'*41]},{'body':'x'*30001}]:
             self.post(self.alice,{**p,**invalid},400)
         self.post(self.gm,{**p,'private':False})
+
+    def test_partial_inventory_transfer_preserves_properties_and_undo(self):
+        item=Item.objects.create(character=self.a,name='Зелье',quantity=5,data={'item_type':'consumable','description':'Особое зелье','custom':{'maker':'А'}})
+        self.post(self.alice,{'op':'item.transfer','id':item.id,'revision':item.revision,'quantity':2,'character':self.b.id})
+        item.refresh_from_db();received=self.b.items.get(archived=False)
+        self.assertEqual(item.quantity,3);self.assertEqual(received.quantity,2);self.assertEqual(received.data,item.data)
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();received.refresh_from_db()
+        self.assertEqual(item.quantity,5);self.assertTrue(received.archived);self.assertEqual(received.quantity,0)
+        self.post(self.alice,{'op':'redo'});received.refresh_from_db();self.assertFalse(received.archived);self.assertEqual(received.quantity,2)
+        self.post(self.bob,{'op':'item.consume','id':received.id,'revision':received.revision,'quantity':1})
+        self.post(self.alice,{'op':'undo'},400)
+        self.post(self.bob,{'op':'undo'});self.post(self.alice,{'op':'undo'})
+        item.refresh_from_db();self.assertEqual(item.quantity,5)
+
+    def test_inventory_create_edit_delete_and_legacy_equip_undo(self):
+        p={'op':'item.save','character':self.a.id,'name':'Клинок','quantity':1,'data':{'item_type':'weapon','dice':'1к6'},'equipped':True}
+        result=self.post(self.alice,p);item=Item.objects.get(pk=result['id'])
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();self.assertTrue(item.archived)
+        self.post(self.alice,{'op':'redo'});item.refresh_from_db();self.assertFalse(item.archived)
+        self.post(self.alice,{**p,'id':item.id,'revision':item.revision,'name':'Новый клинок','data':{'item_type':'weapon','dice':'1к8'}})
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();self.assertEqual(item.name,'Клинок');self.assertEqual(item.data['dice'],'1к6')
+        self.post(self.alice,{'op':'item.delete','id':item.id,'revision':item.revision});item.refresh_from_db();self.assertTrue(item.archived)
+        self.client.force_login(self.alice)
+        sheet=next(c for c in self.client.get('/api/state/').json()['characters'] if c['id']==self.a.id)
+        self.assertEqual(sheet['items'],[])
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();self.assertFalse(item.archived);self.assertTrue(item.equipped)
+        item.equipped=False;item.save()
+        Event.objects.create(actor=self.alice,label='Старая экипировка',before={f'item:{item.id}':{'equipped':True}},after={f'item:{item.id}':{'equipped':False}})
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();self.assertTrue(item.equipped)
+
+    def test_stock_stale_versions_and_invalid_quantities(self):
+        item=Item.objects.create(campaign=self.campaign,name='Золото',quantity=20,data={'item_type':'currency'})
+        p={'op':'item.consume','id':item.id,'revision':1,'quantity':5}
+        self.post(self.alice,p);self.post(self.bob,p,400)
+        item.refresh_from_db();self.assertEqual(item.quantity,15)
+        for value in [0,-1,16,1.5,True]:self.post(self.alice,{**p,'revision':item.revision,'quantity':value},400)
+        stranger=User.objects.create_user('outsider')
+        self.post(stranger,{**p,'revision':item.revision},403)
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();self.assertEqual(item.quantity,20)
+
+    def test_transfer_recipient_permissions_and_combat_restrictions(self):
+        item=Item.objects.create(character=self.a,name='Верёвка',quantity=3)
+        stranger=User.objects.create_user('outsider')
+        other=Character.objects.create(owner=stranger,name='Чужой',runtime=fresh())
+        self.post(self.alice,{'op':'item.transfer','id':item.id,'character':other.id,'quantity':1},403)
+        self.post(self.alice,{'op':'item.transfer','id':item.id,'character':self.a.id,'quantity':1},400)
+        self.post(self.alice,{'op':'item.transfer','id':item.id,'character':self.b.id,'quantity':4},400)
+        self.start()
+        self.post(self.alice,{'op':'item.transfer','id':item.id,'character':self.b.id,'quantity':1},400)
+        stock=Item.objects.create(campaign=self.campaign,name='Зелье',quantity=3)
+        self.post(self.alice,{'op':'item.transfer','id':stock.id,'character':self.b.id,'quantity':1},400)
+
+    def test_equipment_undo_respects_battle_start_dependency(self):
+        result=self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Доспех','quantity':1,'equipped':True,'data':{'item_type':'armor','armor':3}})
+        self.start()
+        self.post(self.alice,{'op':'undo'},400)
+        self.post(self.gm,{'op':'undo'});self.post(self.alice,{'op':'undo'})
+        self.assertTrue(Item.objects.get(pk=result['id']).archived)
+
+    def test_saving_armor_equips_only_one_and_undo_restores_previous(self):
+        old=Item.objects.create(character=self.a,name='Старый доспех',equipped=True,data={'item_type':'armor','armor':2})
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Новый доспех','quantity':1,'equipped':True,'data':{'item_type':'armor','armor':4}})
+        old.refresh_from_db();self.assertFalse(old.equipped);self.assertEqual(computed(self.a)['ac'],9)
+        self.post(self.alice,{'op':'undo'});old.refresh_from_db();self.assertTrue(old.equipped);self.assertEqual(computed(self.a)['ac'],7)

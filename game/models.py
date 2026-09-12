@@ -69,6 +69,8 @@ class Item(models.Model):
     character = models.ForeignKey(Character, null=True, blank=True, on_delete=models.CASCADE, related_name='items')
     campaign = models.ForeignKey(Campaign, null=True, blank=True, on_delete=models.CASCADE, related_name='items')
     entry = models.ForeignKey(Entry, null=True, blank=True, on_delete=models.SET_NULL)
+    archived = models.BooleanField(default=False)
+    revision = models.PositiveIntegerField(default=1)
     name = models.CharField(max_length=160)
     quantity = models.PositiveIntegerField(default=1)
     equipped = models.BooleanField(default=False)

@@ -117,7 +117,7 @@ def serialize_char(c, user):
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
             'memberships': list(c.memberships.values('campaign_id', 'squad_id')),
-            'items': list(c.items.values('id', 'entry_id', 'name', 'quantity', 'equipped', 'slot', 'data')),
+            'items': list(c.items.filter(archived=False).values('id', 'revision', 'entry_id', 'name', 'quantity', 'equipped', 'slot', 'data')),
             'scene_id': scene.id if scene else None}
 
 
@@ -137,7 +137,7 @@ def state(request):
                           'players': list(c.players.values('id', 'username')) if member else [],
                           'notes': c.notes if member else None, 'note_revision': c.note_revision if member else None,
                           'squads': list(c.squads.values('id', 'name')),
-                          'items': list(c.items.values('id', 'entry_id', 'name', 'quantity', 'data')) if member else []})
+                          'items': list(c.items.filter(archived=False).values('id', 'revision', 'entry_id', 'name', 'quantity', 'data')) if member else []})
     sessions = [{'id': s.id, 'name': s.name, 'campaign_id': s.campaign_id, 'squad_id': s.squad_id,
                  'characters': list(s.characters.values_list('id', flat=True))}
                 for s in Session.objects.filter(campaign_id__in=accessible)]
@@ -356,7 +356,7 @@ def execute(user, p):
     elif op in ['knowledge.save','knowledge.archive']:
         return knowledge.save(user,p)
     elif op.startswith('item.'):
-        item_action(user, p)
+        return item_action(user, p) or {}
     elif op == 'session.create':
         require_master(user)
         squad = get_object_or_404(Squad, pk=p['squad'])
@@ -393,6 +393,7 @@ def execute(user, p):
         change.watch(scene).state['active'] = True
         for c in chars:
             change.watch(c)
+            for item in c.items.filter(equipped=True,archived=False):change.depend(item)
             enchantments.start_battle(c,computed(c))
             c.runtime.update(used={}, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
                              stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
@@ -611,87 +612,9 @@ def validate_entry(d):
         bounded(e.get('turns', 3), 1, 100)
 
 
-def item_action(user, p):
-    op = p['op']
-    item = get_object_or_404(Item, pk=p['id']) if p.get('id') else Item()
-    if item.pk:
-        owned(user, item.character_id) if item.character_id else access_campaign(user, item.campaign_id)
-    if op in ['item.delete','item.transfer'] and item.character_id and current_scene(item.character):
-        raise ValueError('Передача и удаление предметов доступны после боя. В бою используйте надевание/снятие.')
-    if op == 'item.equip':
-        if not item.equipped and item.quantity<1: raise ValueError('Нет предмета в наличии')
-        if item.data.get('item_type') in ['currency','consumable']:
-            raise ValueError('Этот предмет нельзя надеть')
-        if not item.character_id:
-            raise ValueError('Сначала передайте предмет персонажу')
-        c = owned(user,item.character_id)
-        scene = current_scene(c)
-        change = Change(user,'Экипировка · '+item.name,scene)
-        change.watch(item);change.watch(c)
-        if scene:
-            if item.data.get('item_type')=='armor':
-                raise ValueError('Доспех меняется вне боя')
-            if scene.state['order'][scene.state['turn']]!=c.id or c.runtime['actions'].get('main',0)<1:
-                raise ValueError('Для смены оружия нужно основное действие в свой ход')
-            c.runtime['actions']['main']-=1
-        item.equipped=not item.equipped
-        if item.equipped and item.data.get('dice'):
-            c.runtime['weapon_id']=item.pk
-        if item.equipped and item.data.get('item_type')=='armor':
-            for other in c.items.filter(equipped=True).exclude(pk=item.pk):
-                if other.data.get('item_type')=='armor':
-                    change.watch(other).equipped=False
-        change.finish()
-        return
-    if op == 'item.delete':
-        item.delete()
-        return
-    if op == 'item.transfer':
-        if p.get('character'):
-            c = owned(user, p['character'])
-            if item.campaign_id:
-                if not c.memberships.filter(campaign_id=item.campaign_id).exists():
-                    raise ValueError('Персонаж не участвует в этой кампании')
-            item.character, item.campaign = c, None
-        else:
-            campaign = access_campaign(user, p['campaign'])
-            if item.character_id and not item.character.memberships.filter(campaign=campaign).exists():
-                raise ValueError('Персонаж не участвует в этой кампании')
-            item.character, item.campaign = None, campaign
-        item.equipped = False
-    else:
-        if not item.pk:
-            if p.get('character'):
-                item.character = owned(user, p['character'])
-            else:
-                item.campaign = access_campaign(user, p['campaign'])
-        if item.character_id and current_scene(item.character):
-            raise ValueError('Свойства предмета меняются вне боя. Для смены оружия используйте «Надеть».')
-        item.name = str(p.get('name', '')).strip()[:160]
-        if not item.name:
-            raise ValueError('Укажите предмет')
-        item.quantity = bounded(p.get('quantity', 1), 0, 100000)
-        item.equipped = bool(p.get('equipped')) if item.character_id else False
-        item.slot = str(p.get('slot', ''))[:40]
-        data = p.get('data', {})
-        if not isinstance(data, dict):
-            raise ValueError('Некорректные свойства')
-        validate_entry(data)
-        item_type=data.get('item_type','other')
-        if item_type not in ['weapon','focus','armor','shield','consumable','currency','other']:
-            raise ValueError('Неизвестный тип предмета')
-        if item_type=='currency':
-            item.name='Золото';item.equipped=False;item.slot='';data={'item_type':'currency'}
-        if item_type=='consumable' or item.quantity==0:item.equipped=False
-        enchantments.validate(data)
-        if item_type=='weapon' and data.get('dice'):
-            import re
-            if not re.fullmatch(r'[1-9]\d{0,2}[кd][1-9]\d{0,2}',data['dice']):
-                raise ValueError('Урон оружия: количество и грани кубиков, например 1к6')
-        if 'entry' in p:
-            item.entry=get_object_or_404(Entry,pk=p['entry'],kind='item') if p['entry'] else None
-        item.data = data
-    item.save()
+def item_action(user,p):
+    from .inventory import mutate
+    return mutate(user,p)
 
 
 def use_ability(user, p):
@@ -726,6 +649,7 @@ def use_ability(user, p):
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
+    for item in c.items.filter(equipped=True,archived=False):change.depend(item)
     if pool:
         change.inputs['roll_pool']=pool
         change.inputs['roll_result']=', '.join(str(v) for v in pool['dice'])

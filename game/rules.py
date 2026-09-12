@@ -203,6 +203,13 @@ def put_effect(c, effect):
     existing.append(effect)
 
 
+ITEM_FIELDS = ['character_id','campaign_id','entry_id','name','quantity','equipped','slot','data','archived']
+
+
+def item_snapshot(item):
+    return {key:getattr(item,key) for key in ITEM_FIELDS}
+
+
 class Change:
     """Store only changed resource snapshots. Undo never replaces unrelated resources."""
     def __init__(self, user, label, scene=None, inputs=None):
@@ -215,16 +222,24 @@ class Change:
         key = ('scene:' if isinstance(obj, Scene) else 'item:' if isinstance(obj,Item) else 'character:') + str(obj.pk)
         if key not in self.objects:
             self.objects[key] = obj
-            self.before[key] = copy.deepcopy({'equipped':obj.equipped} if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime)
+            self.before[key] = copy.deepcopy(item_snapshot(obj) if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime)
         return obj
+
+    def depend(self, obj):
+        key=('item:' if isinstance(obj,Item) else 'character:')+str(obj.pk)
+        self.inputs.setdefault('dependencies',[])
+        if key not in self.inputs['dependencies']:self.inputs['dependencies'].append(key)
 
     def finish(self, record=False):
         after = {}
         for key, obj in self.objects.items():
-            value = {'equipped':obj.equipped} if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime
+            value = item_snapshot(obj) if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime
             if value != self.before[key]:
                 after[key] = copy.deepcopy(value)
-                obj.save(update_fields=['equipped'] if isinstance(obj,Item) else ['state'] if isinstance(obj, Scene) else ['runtime'])
+                if isinstance(obj,Item):
+                    obj.revision+=1
+                    obj.save(update_fields=ITEM_FIELDS+['revision'])
+                else:obj.save(update_fields=['state'] if isinstance(obj, Scene) else ['runtime'])
         if after or record:
             Event.objects.filter(actor=self.user, undone=True).update(redoable=False)
             Event.objects.create(actor=self.user, label=self.label, scene=self.scene,
@@ -248,7 +263,7 @@ def undo(user, redo=False):
         raise ValueError('Нет действия для повтора' if redo else 'Нет действия для отмены')
     keys = set(event.after)
     for later in Event.objects.filter(id__gt=event.id, undone=False):
-        if keys.intersection(later.after):
+        if keys.intersection(set(later.after)|set(later.inputs.get('dependencies',[]))):
             raise ValueError('Отмена зависит от более позднего действия: ' + later.label)
     expected = event.before if redo else event.after
     replacement = event.after if redo else event.before
@@ -256,12 +271,19 @@ def undo(user, redo=False):
     for key in keys:
         kind, pk = key.split(':')
         obj = (Scene if kind == 'scene' else Item if kind=='item' else Character).objects.get(pk=pk)
-        attr = 'equipped' if kind=='item' else 'state' if kind == 'scene' else 'runtime'
-        if getattr(obj, attr) != (expected[key]['equipped'] if kind=='item' else expected[key]):
-            raise ValueError('Состояние изменилось. Сначала отмените зависимые действия.')
-        objects.append((obj, attr, replacement[key]['equipped'] if kind=='item' else replacement[key]))
+        if kind=='item':
+            if any(getattr(obj,k)!=v for k,v in expected[key].items()):
+                raise ValueError('Предмет изменился. Сначала отмените зависимые действия.')
+            objects.append((obj,None,replacement[key]))
+        else:
+            attr='state' if kind=='scene' else 'runtime'
+            if getattr(obj,attr)!=expected[key]:raise ValueError('Состояние изменилось. Сначала отмените зависимые действия.')
+            objects.append((obj,attr,replacement[key]))
     for obj, attr, value in objects:
-        setattr(obj, attr, value)
-        obj.save(update_fields=[attr])
+        if isinstance(obj,Item):
+            for k,v in value.items():setattr(obj,k,v)
+            obj.revision+=1;obj.save(update_fields=list(value)+['revision'])
+        else:
+            setattr(obj,attr,value);obj.save(update_fields=[attr])
     event.undone = not redo
     event.save(update_fields=['undone'])

@@ -23,7 +23,7 @@ function itemForm(item=null,charId=null,campId=null){
    data.effects=(data.effects||[]).filter(e=>!String(e.key||'').startsWith('item_bonus:'));
    for(const stat of ['hit','damage','ac','speed','max_hp'])if(num(f['bonus_'+stat]))data.effects.push({key:'item_bonus:'+stat,stat,value:num(f['bonus_'+stat])});
   }else{delete data.enchantments;delete data.effects;delete data.keywords;delete data.families}
-  await api({op:'item.save',id:item?.id,character:charId,campaign:campId,entry:type==='currency'?null:itemDraft.entryId,name:type==='currency'?'Золото':f.item_name,quantity:num(f.quantity),slot:item?.slot||'',equipped:equipment&&!!f.equipped,data:type==='currency'?{item_type:'currency'}:data});
+  await api({op:'item.save',id:item?.id,revision:item?.revision,character:charId,campaign:campId,entry:type==='currency'?null:itemDraft.entryId,name:type==='currency'?'Золото':f.item_name,quantity:num(f.quantity),slot:item?.slot||'',equipped:equipment&&!!f.equipped,data:type==='currency'?{item_type:'currency'}:data});
  });
 }
 document.addEventListener('change',e=>{
@@ -47,3 +47,17 @@ document.addEventListener('change',e=>{
   el('typed-item-fields').innerHTML=itemTypeFields(typeSelect.value,itemDraft.data,itemDraft.item);
  }
 });
+function stockItem(id){for(const c of S.characters){const item=byId(c.items,id);if(item)return {...item,character:c.id,campaign:null}}for(const c of S.campaigns){const item=byId(c.items,id);if(item)return {...item,character:null,campaign:c.id}}return null}
+function stockUndo(){return `<div class="toolbar stock-undo">${btn('↶ Отмена','undo')}${btn('↷ Повтор','redo')}</div>`}
+function transferItemForm(item){
+ const source=item.character?byId(S.characters,item.character):null;
+ const campaigns=source?source.memberships.map(m=>m.campaign_id):[item.campaign];
+ const chars=S.characters.filter(c=>c.id!==source?.id&&!c.scene_id&&(item.campaign?c.memberships.some(m=>campaigns.includes(m.campaign_id)):c.owner_id===S.user.id||S.user.master||c.memberships.some(m=>campaigns.includes(m.campaign_id))));
+ const choices=[...chars.map(c=>({id:'character:'+c.id,name:c.name+' · '+c.owner})),...S.campaigns.filter(c=>source&&c.member&&campaigns.includes(c.id)).map(c=>({id:'campaign:'+c.id,name:'Общий запас · '+c.name}))];
+ modal('Передать · '+item.name,`${input('quantity','Количество',item.quantity,'number',`min="1" max="${item.quantity}" required`)}${selector('destination','Получатель',choices,null)}`,async()=>{
+  const f=formObject(),[kind,id]=(f.destination||'').split(':');if(!['character','campaign'].includes(kind)||!num(id))throw Error('Выберите получателя');
+  await api({op:'item.transfer',id:item.id,revision:item.revision,quantity:Number(f.quantity),[kind]:num(id)});
+ },'Передать');
+}
+function consumeItemForm(item){modal('Списать · '+item.name,`${input('quantity','Количество',1,'number',`min="1" max="${item.quantity}" required`)}${input('reason','На что потрачено / причина','')}`,async()=>api({op:'item.consume',id:item.id,revision:item.revision,quantity:Number(formObject().quantity),reason:formObject().reason}),'Списать')}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-do="item.consume"]');if(b)consumeItemForm(stockItem(b.dataset.id))});
