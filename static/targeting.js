@@ -1,3 +1,6 @@
+function marks(c){return (c.calc.effects||[]).filter(e=>(e.status||e.name)==='Метка')}
+function markSourceField(c,a){return (a.data.damage||a.data.weapon)&&marks(c).some(e=>!e.source_id)?'<label><input type="checkbox" name="mark_source_included"> Атака включает источник метки на поле</label>':''}
+function markPenalty(){const ids=checks('targets');return marks(current()).some(e=>e.source_id?!ids.includes(e.source_id):!formObject().mark_source_included)?-3:0}
 function externalTargetField(a){return a.data.damage||a.data.weapon?'<div id="external-bp"></div>':''}
 function updateExternalTarget(){
  const box=el('external-bp');if(!box)return;
@@ -23,9 +26,9 @@ function targetDamageFormula(a,target){
 function attackTargetPreview(a){
  const ids=checks('targets'),sign=n=>(n>=0?'+':'')+n;
  return (ids.length?ids.map(id=>byId(S.characters,id)):[null]).map(t=>{
- const bonus=t?targetHitBonus(a,t):Number(formObject().external_bp||0)+(formObject().external_prone&&(a.data.keywords||[]).some(w=>/^Ближний(?:\s|$)/.test(w))?2:0),total=a.hit_bonus+bonus;
- return `<div>${esc(t?t.name:'Цель на игровом поле')}: попадание <strong>${sign(total)}</strong>${bonus?' (бонус цели '+sign(bonus)+')':''}${a.armored_hit_bonus!=null?' · по броне '+sign(a.armored_hit_bonus+bonus):''}<br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong></div>`;
+ const bonus=t?targetHitBonus(a,t):Number(formObject().external_bp||0)+(formObject().external_prone&&(a.data.keywords||[]).some(w=>/^Ближний(?:\s|$)/.test(w))?2:0),penalty=markPenalty(),total=a.hit_bonus+bonus+penalty;
+ return `<div>${esc(t?t.name:'Цель на игровом поле')}: попадание <strong>${sign(total)}</strong>${penalty?' (метка −3)':''}${bonus?' (бонус цели '+sign(bonus)+')':''}${a.armored_hit_bonus!=null?' · по броне '+sign(a.armored_hit_bonus+bonus+penalty):''}<br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong></div>`;
  }).join('');
 }
-function attackTargetLog(rows){return (rows||[]).map(r=>'<br>'+esc(r.name+': попадание '+(r.hit>=0?'+':'')+r.hit+(r.target_bonus?' · бонус цели '+r.target_bonus:'')+(r.armored_hit!=null?' · по броне '+r.armored_hit:'')+(r.damage?' · формула '+r.damage:''))).join('')}
-document.addEventListener('input',e=>{if(['external_bp','external_prone'].includes(e.target.name))updateAttackPreview()});
+function attackTargetLog(rows){return (rows||[]).map(r=>'<br>'+esc(r.name+': попадание '+(r.hit>=0?'+':'')+r.hit+(r.mark_penalty?' · метка '+r.mark_penalty:'')+(r.target_bonus?' · бонус цели '+r.target_bonus:'')+(r.armored_hit!=null?' · по броне '+r.armored_hit:'')+(r.damage?' · формула '+r.damage:''))).join('')}
+document.addEventListener('input',e=>{if(['external_bp','external_prone','mark_source_included'].includes(e.target.name))updateAttackPreview()});

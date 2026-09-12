@@ -23,7 +23,12 @@ def resolve(character,ability,calc,targets,payload):
     external+=2 if prone and matches_keyword('Ближний',keywords(ability,calc)) else 0
     from .rules import computed, formula
     from .statuses import status_name
-    base=hit_bonus(character,ability,calc)
+    marks=[e for e in calc['effects'] if status_name(e)=='Метка']
+    included=payload.get('mark_source_included',False)
+    if type(included) is not bool:raise ValueError('Укажите, включён ли источник метки в атаку')
+    selected={t.pk for t in targets}
+    penalty=-3 if any(e.get('source_id') not in selected if e.get('source_id') else not included for e in marks) else 0
+    base=hit_bonus(character,ability,calc)+penalty
     result=[]
     for target in targets or [None]:
         effects=computed(target)['effects'] if target else []
@@ -32,7 +37,7 @@ def resolve(character,ability,calc,targets,payload):
         damage=formula(character,ability,payload.get('outcome')=='critical',calc)
         bonus=enchantments.ability_bonus({**calc,'effects':effects},ability,'target_hit') if target else external
         result.append({'id':target.pk if target else None,'name':target.name if target else 'Цель на игровом поле',
-                       'hit':base+bonus,'target_bonus':bonus,'bp_damage':extra,
+                       'hit':base+bonus,'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,
                        'damage':damage+(f' +{extra} [БП]' if extra else ''),
                        'armored_hit':base+bonus+calc['armored_hit'] if ability.data.get('weapon') and calc['armored_hit'] else None})
     return result

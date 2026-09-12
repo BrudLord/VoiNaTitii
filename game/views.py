@@ -519,6 +519,12 @@ def execute(user, p):
         effect={'key':'status:'+name,'name':name,'status':name if name in STATUS else '',
                 'stat':stat,'value':bounded(p.get('value',1),0,1000)*sign,'duration':p.get('duration','turns'),
                 'remaining':bounded(p.get('turns',3),1,100),'source':user.username,'source_id':None}
+        if p.get('source_id'):
+            source=get_object_or_404(Character,pk=p['source_id'])
+            scene=current_scene(c)
+            if scene and source.pk not in scene.state['order']:
+                raise ValueError('Источник эффекта должен быть участником боя')
+            effect.update(source_id=source.pk,source=source.name)
         validate_entry({'effects':[dict(effect,turns=effect['remaining'])]})
         change=Change(user,'Эффект · '+name,current_scene(c))
         change.watch(c)

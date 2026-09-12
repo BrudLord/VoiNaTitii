@@ -36,11 +36,12 @@ def literal_effects(description):
                 clause_effects.append({'stat':bonuses[match[2]],'value':int(match[1].replace('−','-')),
                                        'name':'Бонус к '+match[2],**timing})
         for status,(stat,sign) in STATUS.items():
-            if status in ['Сон','Страх','Метка']:continue
-            pattern=r'(?<![\w])'+re.escape(status)+r'(?:\s+(\d+))?(?![\w])'
+            if status in ['Сон','Страх']:continue
+            pattern=r'(?<![\w])'+('Метк[ау]' if status=='Метка' else re.escape(status))+r'(?:\s+(\d+))?(?![\w])'
             for match in re.finditer(pattern,body):
                 if not match[1] and status not in ['Сон','Страх','Обездвижен','Ослепление','Метка','Сбит с ног']:continue
                 tail=body[match.end():]
+                if status=='Метка' and re.match(r'\s+[А-ЯЁ]',tail):continue
                 if re.match(r'[\s\\]*[*×+−-]',tail):continue
                 timing=duration(tail)
                 if timing is None:continue

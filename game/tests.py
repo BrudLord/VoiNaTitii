@@ -1971,3 +1971,43 @@ class GameTests(TestCase):
         self.a.runtime['actions']['main']=1;self.a.save()
         spell=Entry(name='Заклинание',data={'formula':'1к6','damage':True})
         self.assertEqual(availability(self.a,spell,scene),'')
+
+    def test_mark_penalty_uses_all_attack_targets(self):
+        from .targeting import resolve
+        self.a.runtime['effects']=[{'key':'status:Метка','name':'Метка','stat':'status','value':1,'source_id':self.b.id,'duration':'turns','remaining':1}]
+        self.a.save()
+        attack=Entry(name='Атака',data={'damage':True,'formula':'1к6'})
+        calc=computed(self.a)
+        self.assertEqual(resolve(self.a,attack,calc,[],{})[0]['mark_penalty'],-3)
+        self.assertEqual(resolve(self.a,attack,calc,[self.a],{})[0]['mark_penalty'],-3)
+        rows=resolve(self.a,attack,calc,[self.a,self.b],{})
+        self.assertEqual([r['mark_penalty'] for r in rows],[0,0])
+        self.assertEqual(resolve(self.a,attack,calc,[],{'mark_source_included':True})[0]['mark_penalty'],-3)
+        self.assertEqual(calc['hit'],0)
+
+    def test_external_mark_source_is_explicit_and_only_affects_hit(self):
+        from .targeting import resolve
+        self.a.runtime['effects']=[{'key':'mark','name':'Метка','stat':'status','value':1,'source_id':None}];self.a.save()
+        attack=Entry(name='Атака',data={'damage':True,'formula':'2к6'})
+        calc=computed(self.a)
+        before=resolve(self.a,attack,calc,[],{})[0]
+        after=resolve(self.a,attack,calc,[],{'mark_source_included':True})[0]
+        self.assertEqual(after['hit']-before['hit'],3)
+        self.assertEqual(after['damage'],before['damage'])
+        with self.assertRaises(ValueError):resolve(self.a,attack,calc,[],{'mark_source_included':'yes'})
+
+    def test_master_mark_source_and_target_turn_expiry(self):
+        scene=self.start()
+        self.post(self.gm,{'op':'effect.apply','character':self.a.id,'name':'Метка','value':1,'turns':1,'source_id':self.b.id})
+        self.a.refresh_from_db();effect=self.a.runtime['effects'][0]
+        self.assertEqual(effect['source_id'],self.b.id);self.assertEqual(effect['source'],self.b.name)
+        self.turn(scene,self.alice);self.a.refresh_from_db();self.assertEqual(self.a.runtime['effects'],[])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['effects'][0]['source_id'],self.b.id)
+
+    def test_mark_import_handles_inflection_without_importing_mark_of_corruption(self):
+        from .book_effects import literal_effects
+        for word in ['Метка','Метку']:
+            effects,target=literal_effects('Цель получает 1к6 урона и '+word+' на 1 ход.')
+            self.assertEqual(len(effects),1)
+            self.assertEqual((effects[0]['name'],effects[0]['turns']),('Метка',1))
+        self.assertEqual(literal_effects('Цель получает эффект Метка Порчи на 3 хода.')[0],[])
