@@ -53,6 +53,27 @@ def profile(ability):
     return copy.deepcopy(BOOK.get(ability.name))
 
 
+def standard_count(ability):
+    value=ability.data.get('standard_attack_count',2 if ability.name=='Стремительные удары' else None)
+    if value is not None and (type(value) is not int or not 1<=value<=100):
+        raise ValueError('Количество стандартных атак должно быть целым числом от 1 до 100')
+    return value
+
+
+def effective_profile(ability,character):
+    """Keep an explicit attack profile; otherwise derive the learned passive.
+
+    This is an ability's attack count, not extra actions or extra uses. Duplicate
+    versions of the passive never multiply one another.
+    """
+    existing=profile(ability)
+    if 'attack_sequence' in ability.data or existing is not None:return existing
+    if ability.name!='Стандартная атака' or not ability.data.get('system'):return None
+    count=max((standard_count(a) or 1 for a in character.abilities.all()
+               if not a.archived and a.data.get('category','active')=='passive'),default=1)
+    return {'count':count,'targets':'any'} if count>1 else None
+
+
 def target_key(row, participants):
     pk = row.get('target')
     external = row.get('external_target', '')
@@ -67,14 +88,14 @@ def target_key(row, participants):
     return ('external', ' '.join(external.split()).casefold().replace('ё', 'е'))
 
 
-def plan(ability, payload, participants, *, multiplier=1):
+def plan(ability, payload, participants, *, multiplier=1, character=None):
     """Return immutable-by-convention steps; never alter rows or model instances.
 
     multiplier is executor-owned (e.g. a consumed Quick Fire preparation), never
     accepted from payload. Count and same/different-target rules are independent
     of hit/miss: a miss is still an attack against the selected target.
     """
-    spec = profile(ability)
+    spec = effective_profile(ability,character) if character is not None else profile(ability)
     if not spec:
         raise ValueError('У этого умения нет последовательности атак')
     if type(multiplier) is not int or multiplier not in [1, 2]:
@@ -123,7 +144,7 @@ STEP_FIELDS = {
     'number', 'target', 'external_target', 'outcome', 'roll_result', 'reactions',
     'reaction_rolls', 'spreads', 'external_bp', 'external_conductor', 'external_prone',
     'mark_source_included', 'mystic_arrows', 'charged_arrows', 'charged_target',
-    'exhaustion_target', 'miss_damage', 'movement_before', 'movement_after',
+    'exhaustion_target', 'miss_damage', 'movement_before', 'movement_after', 'weave',
 }
 
 
@@ -166,7 +187,7 @@ def execute(user, payload, character, ability, scene, *, drawn=None, embedded=Fa
     from .passives import turn_token
     if payload.get('op') != 'ability.use' or not (ability.data.get('damage') or ability.data.get('weapon')):
         raise ValueError('Последовательность должна состоять из атак')
-    ordered = plan(ability, payload, set(scene.state['order']))
+    ordered = plan(ability, payload, set(scene.state['order']),character=character)
     if preview_steps is not None and (type(preview_steps) is not int or not 0 <= preview_steps <= len(ordered['attacks'])):
         raise ValueError('Некорректный номер атаки для предварительного расчёта')
     for step in ordered['attacks']:

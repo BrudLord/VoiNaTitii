@@ -719,6 +719,9 @@ def validate_entry(d):
     if 'attack_sequence' in d:
         from .attack_sequences import validate_profile
         validate_profile(d['attack_sequence'])
+    if 'standard_attack_count' in d:
+        from .attack_sequences import standard_count
+        standard_count(Entry(data=d))
     for key in ['formula', 'dice', 'stat', 'source_name']:
         if key in d and not isinstance(d[key], str):
             raise ValueError('Параметр ' + key + ' должен быть строкой')
@@ -930,12 +933,13 @@ def use_ability(user, p, embedded=False, *, sequence_step=False, preview_steps=N
     if not aura:
         from . import thrown
         thrown.release(change,c,a)
-    if embedded or sequence_step:return change
+    if embedded:return change
     if weave and weave.get('child'):
         change.finish(defer_record=True)
         child=use_ability(user,weave['child'],embedded=True,preview_steps=preview_steps)
         change.absorb(child)
         change.inputs['weaving']={'spell':weave['spell'],'center':weave['center'],'inputs':child.inputs}
+    if sequence_step:return change
     change.finish()
     return change
 

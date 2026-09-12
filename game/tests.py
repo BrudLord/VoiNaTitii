@@ -3882,3 +3882,62 @@ class GameTests(TestCase):
         self.post(self.alice,{**parent,'weave':child});self.a.refresh_from_db()
         self.assertEqual(Event.objects.count(),before+1);self.assertEqual(self.a.runtime['used'][str(spell.pk)],1)
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertTrue(self.a.runtime.get('mystic_weaving'))
+
+    def test_standard_sequence_depends_on_current_learned_passive(self):
+        from .attack_sequences import effective_profile
+        standard=Entry(name='Стандартная атака',data={'system':True,'weapon':True})
+        passive=Entry.objects.create(kind='ability',name='Стремительные удары',data={'category':'passive'})
+        self.assertIsNone(effective_profile(standard,self.a));self.a.abilities.add(passive)
+        self.assertEqual(effective_profile(standard,self.a),{'count':2,'targets':'any'})
+        self.assertIsNone(effective_profile(Entry(name='Провоцированная атака',data={'system':True}),self.a))
+        standard.data['attack_sequence']=None;self.assertIsNone(effective_profile(standard,self.a));standard.data.pop('attack_sequence')
+        passive.archived=True;passive.save();self.assertIsNone(effective_profile(standard,self.a))
+        passive.archived=False;passive.data['category']='active';passive.save();self.assertIsNone(effective_profile(standard,self.a))
+        passive.data['category']='passive'
+        for value in [1,None]:
+            passive.data['standard_attack_count']=value;passive.save();self.assertIsNone(effective_profile(standard,self.a))
+        passive.data.pop('standard_attack_count');passive.save()
+        self.a.abilities.remove(passive);self.assertIsNone(effective_profile(standard,self.a))
+
+    def test_standard_sequence_passive_survives_rename_and_does_not_stack_duplicates(self):
+        from .attack_sequences import effective_profile
+        passive=Entry.objects.create(kind='ability',name='Стремительные удары',data={'category':'passive'})
+        self.a.abilities.add(passive)
+        self.post(self.gm,{'op':'entry.save','id':passive.pk,'kind':'ability','name':'Моя скорость','data':{'category':'passive'}})
+        passive.refresh_from_db();self.assertEqual(passive.data['standard_attack_count'],2)
+        self.a.abilities.add(Entry.objects.create(kind='ability',name='Ещё скорость',data={'category':'passive','standard_attack_count':2}))
+        standard=Entry(name='Стандартная атака',data={'system':True})
+        self.assertEqual(effective_profile(standard,self.a)['count'],2)
+        for value in [True,0,101,'2',{}]:
+            self.post(self.gm,{'op':'entry.save','id':passive.pk,'kind':'ability','name':passive.name,'data':{'category':'passive','standard_attack_count':value}},400)
+
+    def test_double_standard_attack_keeps_one_action_and_separate_mystic_arrow_uses(self):
+        scene,old,bow,_=self.mystic_setup()
+        self.a.abilities.add(Entry.objects.create(kind='ability',name='Стремительные удары',data={'category':'passive'}))
+        p={'op':'ability.use','character':self.a.pk,'ability':old['ability'],'attacks':[
+            {'target':self.b.pk,'outcome':'hit','roll_result':'17; 4','mystic_arrows':['frost']},
+            {'target':self.b.pk,'outcome':'hit','roll_result':'18; 5','mystic_arrows':['bind']}]}
+        count=Event.objects.count();self.post(self.alice,p);self.a.refresh_from_db()
+        self.assertEqual(Event.objects.count(),count+1);self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.assertEqual(self.a.runtime['used'][str(old['ability'])],1);self.assertEqual(self.a.runtime['mystic_arrows'],2)
+        rows=Event.objects.latest('id').inputs['attack_sequence']['attacks']
+        self.assertEqual([r['inputs']['mystic_arrows']['penalty_added'] for r in rows],[0,1])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime.get('mystic_arrows',0),0);self.assertEqual(self.a.runtime['actions']['main'],1);self.assertFalse(self.b.runtime['effects'])
+
+    def test_double_standard_attack_executes_woven_spell_inside_first_step(self):
+        scene,prepare,attack,spell,parent=self.weave_setup()
+        self.a.abilities.add(Entry.objects.create(kind='ability',name='Стремительные удары',data={'category':'passive'}))
+        p={'op':'ability.use','character':self.a.pk,'ability':attack.pk,'attacks':[
+            {'target':self.b.pk,'outcome':'hit','roll_result':'17; 3','weave':parent['weave']},
+            {'target':self.b.pk,'outcome':'critical','roll_result':'20; 6'}]}
+        count=Event.objects.count();preview=self.sequence_preview_request(p,1)
+        self.assertEqual(preview.status_code,200,preview.content[:1000]);self.b.refresh_from_db();self.assertEqual(self.b.runtime['temp'],0)
+        simulated=next(c for c in preview.json()['characters'] if c['id']==self.b.pk);self.assertEqual(simulated['runtime']['temp'],5)
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(Event.objects.count(),count+1);self.assertEqual(self.b.runtime['temp'],5)
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertEqual(self.a.runtime['used'][str(spell.pk)],1)
+        rows=Event.objects.latest('id').inputs['attack_sequence']['attacks']
+        self.assertEqual(rows[0]['inputs']['weaving']['spell'],spell.name);self.assertNotIn('weaving',rows[1]['inputs'])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertTrue(self.a.runtime.get('mystic_weaving'));self.assertEqual(self.b.runtime['temp'],0)
