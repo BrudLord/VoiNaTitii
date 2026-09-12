@@ -10,6 +10,7 @@ class Entry(models.Model):
     KINDS = [(k, v) for k, v in [('ability', 'Умение'), ('item', 'Снаряжение'), ('race', 'Раса'),
              ('class', 'Класс'), ('school', 'Школа'), ('background', 'Предыстория'), ('craft', 'Ремесло'),
              ('keyword', 'Ключевое слово'), ('specialization', 'Специализация'), ('effect', 'Эффект')]]
+    source_entry = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='personal_versions')
     personal_character = models.ForeignKey('Character', null=True, blank=True, on_delete=models.CASCADE, related_name='personal_abilities')
     kind = models.CharField(max_length=30, choices=KINDS)
     name = models.CharField(max_length=160)

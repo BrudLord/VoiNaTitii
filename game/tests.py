@@ -2891,3 +2891,40 @@ class GameTests(TestCase):
         self.assertEqual(row['name'],'Возвращение стрелы')
         self.assertEqual(row['definition']['name'],'Возвращение стрелы')
         self.assertTrue(row['data']['seeking'])
+
+    def test_restore_shared_ability_keeps_personal_copy_available_for_relearning(self):
+        from .views import serialize_char
+        a,p=self.personal_ability_payload();self.post(self.alice,p);self.a.refresh_from_db();personal=self.a.personal_abilities.get()
+        self.assertEqual(personal.source_entry_id,a.pk)
+        self.post(self.alice,{'op':'character.ability.restore','character':self.a.pk,'id':personal.pk,'revision':self.a.revision})
+        self.a.refresh_from_db();self.assertTrue(self.a.abilities.filter(pk=a.pk).exists());self.assertFalse(self.a.abilities.filter(pk=personal.pk).exists())
+        row=next(e for e in serialize_char(self.a,self.alice)['personal_abilities'] if e['id']==personal.pk)
+        self.assertEqual(row['data']['effects'][0]['value'],4)
+        self.assertEqual(serialize_char(self.a,self.bob)['personal_abilities'],[])
+        self.post(self.alice,{'op':'character.save','id':self.a.pk,'revision':self.a.revision,'name':self.a.name,'abilities':[personal.pk]})
+        self.assertEqual(self.a.abilities.get().pk,personal.pk)
+
+    def test_restore_shared_ability_checks_owner_revision_battle_and_archived_source(self):
+        a,p=self.personal_ability_payload();self.post(self.alice,p);self.a.refresh_from_db();personal=self.a.personal_abilities.get()
+        restore={'op':'character.ability.restore','character':self.a.pk,'id':personal.pk,'revision':self.a.revision}
+        self.post(self.bob,restore,403);self.post(self.alice,{**restore,'revision':-1},400)
+        a.archived=True;a.save();self.post(self.alice,restore,400)
+        a.archived=False;a.save();self.start();self.a.refresh_from_db()
+        self.post(self.alice,{**restore,'revision':self.a.revision},400)
+        self.assertTrue(self.a.abilities.filter(pk=personal.pk).exists())
+
+    def test_existing_personal_version_source_backfill_ignores_ambiguous_matches(self):
+        import importlib
+        from django.apps import apps
+        migrate=importlib.import_module('game.migrations.0008_entry_source_entry').link_existing_versions
+        source=Entry.objects.create(kind='ability',name='Общее',source='Книга, строка 123')
+        personal=Entry.objects.create(kind='ability',name='Переименовано',source=source.source,personal_character=self.a)
+        Entry.objects.create(kind='ability',name='Дубликат');Entry.objects.create(kind='ability',name='Дубликат')
+        ambiguous=Entry.objects.create(kind='ability',name='Дубликат',personal_character=self.a)
+        migrate(apps,None);personal.refresh_from_db();ambiguous.refresh_from_db()
+        self.assertEqual(personal.source_entry_id,source.pk);self.assertIsNone(ambiguous.source_entry_id)
+
+    def test_selecting_personal_version_replaces_shared_ability_without_double_bonus(self):
+        a,p=self.personal_ability_payload();self.post(self.alice,p);self.a.refresh_from_db();personal=self.a.personal_abilities.get()
+        self.post(self.alice,{'op':'character.save','id':self.a.pk,'revision':self.a.revision,'name':self.a.name,'abilities':[a.pk,personal.pk]})
+        self.assertEqual(list(self.a.abilities.values_list('pk',flat=True)),[personal.pk])

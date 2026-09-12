@@ -94,12 +94,13 @@ def home(request):
 def serialize_char(c, user):
     from .disarm import profile as disarm_profile
     scene = current_scene(c)
+    from .personal_abilities import definition as ability_definition
     abilities = []
     calc = computed(c)
     learned = {a.id:a for a in c.abilities.all() if not a.archived}
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False,personal_character__isnull=True)})
     for a in learned.values():
-        definition={'id':a.id,'kind':a.kind,'name':a.display_name,'description':a.description,'data':copy.deepcopy(a.data),'personal':a.personal_character_id==c.id}
+        definition=ability_definition(a)
         a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)),calc)
         d = copy.deepcopy(a.data)
         charged=charged_arrows.profile(c,a)
@@ -132,6 +133,7 @@ def serialize_char(c, user):
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
             'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'periodic_damage':periodic.damage_events(c),'disarm':disarm_profile(c,calc,scene),'stance_controls':stances.controls(c,scene,calc), 'abilities': abilities,
+            'personal_abilities':[ability_definition(a) for a in c.personal_abilities.filter(archived=False)] if c.owner_id==user.id or master(user) else [],
             'knowledge':knowledge.visible(c,user),
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
@@ -277,7 +279,9 @@ def execute(user, p):
         from django.db.models import Q
         choices=Entry.objects.filter(id__in=ids,kind='ability',archived=False).filter(Q(personal_character__isnull=True)|Q(personal_character=c))
         if choices.count()!=len(set(ids)):raise ValueError('В списке есть недоступное умение')
-        c.abilities.set(choices)
+        roots=[e.source_entry_id for e in choices if e.personal_character_id and e.source_entry_id]
+        if len(roots)!=len(set(roots)):raise ValueError('Выберите одну версию каждого умения')
+        c.abilities.set(choices.exclude(pk__in=roots))
         if creating and p.get('campaign'):
             campaign = access_campaign(user, p['campaign'])
             campaign.players.add(c.owner)
@@ -360,6 +364,9 @@ def execute(user, p):
         c.note_revision += 1
         c.save(update_fields=['notes', 'note_revision'])
         return {'text': c.notes}
+    elif op == 'character.ability.restore':
+        from .personal_abilities import restore
+        return restore(user,p)
     elif op == 'character.ability.save':
         from .personal_abilities import save
         return save(user,p)
