@@ -73,3 +73,13 @@ def mutate(user,p):
         c.runtime.setdefault('once_per_turn',{})['support_water']=token
         change.inputs.update(target=pk,healing_pending=amount,removed=remove)
     change.finish()
+
+
+def minor_attack(c,a):
+    d=a.data
+    if (mode(c)!='Огонь' or not learned(c,'Стихийное превосходство')
+            or d.get('category','active')!='active' or int(d.get('circle',0))!=0
+            or d.get('action','main')!='main' or not (d.get('damage') or d.get('weapon'))):
+        return None
+    result=copy.copy(a);result.data=copy.deepcopy(d);result.data['action']='minor'
+    return result

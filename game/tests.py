@@ -2202,3 +2202,50 @@ class GameTests(TestCase):
         self.post(self.bob,p,403)
         self.post(self.alice,{**p,'stance_mode':'Тьма'},400)
         self.turn(scene,self.alice);self.post(self.alice,p,400)
+
+    def fire_minor_setup(self):
+        support,scene=self.support_setup('Огонь',mastery=True)
+        self.a.refresh_from_db();self.a.runtime['actions'].update(main=0,minor=1);self.a.save()
+        attack=Entry.objects.create(kind='ability',name='Искра',data={'category':'active','action':'main','circle':0,'damage':True,'formula':'1к6','keywords':['Огонь']})
+        self.a.abilities.add(attack)
+        return scene,attack,{'op':'ability.use','character':self.a.id,'ability':attack.id,'targets':[],
+                            'support_minor':True,'outcome':'hit','roll_result':'Попадание 15, урон 6'}
+
+    def test_fire_mastery_attack_uses_minor_when_main_is_exhausted_and_undo_restores_it(self):
+        from .views import serialize_char
+        scene,attack,p=self.fire_minor_setup()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)
+        self.assertEqual(row['reason'],'Нет нужного действия')
+        self.assertEqual(row['support_minor_reason'],'')
+        self.assertEqual(row['formula'],'1к6 +3')
+        self.post(self.alice,p);self.a.refresh_from_db()
+        self.assertEqual((self.a.runtime['actions']['main'],self.a.runtime['actions']['minor']),(0,0))
+        self.assertTrue(Event.objects.latest('id').inputs['support_minor'])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual((self.a.runtime['actions']['main'],self.a.runtime['actions']['minor']),(0,1))
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['minor'],0)
+
+    def test_fire_minor_cannot_bypass_stance_mastery_circle_or_reaction(self):
+        scene,attack,p=self.fire_minor_setup()
+        self.post(self.alice,{**p,'as_reaction':True},400)
+        attack.data['circle']=1;attack.save();self.post(self.alice,p,400)
+        attack.data.update(circle=0,action='reaction');attack.save();self.post(self.alice,p,400)
+        attack.data['action']='main';attack.save()
+        self.a.runtime['elemental_support']['mode']='Земля';self.a.save();self.post(self.alice,p,400)
+        self.a.runtime['elemental_support']['mode']='Огонь';self.a.save()
+        self.a.abilities.remove(Entry.objects.get(name='Стихийное превосходство'));self.post(self.alice,p,400)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['minor'],1)
+
+    def test_fire_minor_requires_own_turn_and_a_minor_resource(self):
+        scene,attack,p=self.fire_minor_setup()
+        self.post(self.alice,p)
+        self.post(self.alice,p,400)
+        self.turn(scene,self.alice);self.post(self.alice,p,400)
+
+    def test_fire_minor_does_not_mutate_catalogue_action_or_allow_non_attacks(self):
+        scene,attack,p=self.fire_minor_setup()
+        self.post(self.alice,p);attack.refresh_from_db()
+        self.assertEqual(attack.data['action'],'main')
+        self.post(self.alice,{'op':'undo'})
+        attack.data['damage']=False;attack.save();self.post(self.alice,p,400)

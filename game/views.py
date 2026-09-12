@@ -109,6 +109,7 @@ def serialize_char(c, user):
         d['keywords']=weaponry.keywords(a,calc)
         if d.get('weapon'):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
+        minor_attack=stances.minor_attack(c,a)
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
                           'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
@@ -119,6 +120,7 @@ def serialize_char(c, user):
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
+                          'support_minor_reason':availability(c,minor_attack,scene,calc) if minor_attack else None,
                           'reflex_reason':availability(c,a,scene,calc,as_reaction=True) if reflex_eligible(c,a) else None,
                           'ready_reason':availability(c,a,scene,calc,readied=True),
                           'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, not bool(roll_pools.profile(a)), calc,scene=scene),
@@ -725,6 +727,11 @@ def use_ability(user, p, embedded=False):
     scene = current_scene(c)
     if not scene:
         raise ValueError('Умение можно применить в активном бою')
+    if p.get('support_minor'):
+        variant=stances.minor_attack(c,a)
+        if not variant or embedded or p.get('as_reaction'):
+            raise ValueError('Атака малым доступна только в режиме Огня со Стихийным превосходством')
+        a=variant
     if embedded:
         a.data=copy.deepcopy(a.data);a.data['action']='free'
     d = a.data
@@ -760,6 +767,9 @@ def use_ability(user, p, embedded=False):
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
+    if p.get('support_minor'):
+        change.label+=' · Малым'
+        change.inputs['support_minor']=True
     if attack_targets:
         change.inputs['attack_targets']=attack_targets
         for pk in ids:change.depend(pool_targets[pk])
