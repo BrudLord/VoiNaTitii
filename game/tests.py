@@ -2743,3 +2743,40 @@ class GameTests(TestCase):
         controls=serialize_char(self.a,self.alice)['stance_controls']
         self.assertEqual(controls['water_reason'],'')
         self.assertEqual(controls['switch_reason'],'Ход другого персонажа')
+
+    def test_wide_swing_tracks_grip_and_does_not_duplicate_existing_reach(self):
+        from .weaponry import keywords
+        from .targeting import hit_bonus
+        passive=Entry.objects.create(kind='ability',name='Широкий замах',data={'category':'passive'})
+        self.a.abilities.add(passive)
+        weapon=Item.objects.create(character=self.a,name='Полуторный меч',equipped=True,data={'dice':'1к8','item_type':'weapon','keywords':['Универсальное 1к10'],'grip':'one'})
+        attack=Entry(name='Атака',data={'weapon':True,'system':True,'keywords':['Ближний']})
+        magic=Entry(name='Заклинание',data={'damage':True,'keywords':['Дальнобойный 5']})
+        calc=computed(self.a)
+        self.assertEqual(calc['weapon_reach'],0)
+        self.assertEqual(hit_bonus(self.a,attack,calc),1)
+        self.assertEqual(hit_bonus(self.a,magic,calc),1)
+        weapon.data['grip']='two';weapon.save();calc=computed(self.a)
+        self.assertEqual(calc['weapon_reach'],1)
+        self.assertIn('Ближний 2',keywords(attack,calc))
+        weapon.data['keywords'].append('Досягаемость 2');weapon.save()
+        self.assertEqual(computed(self.a)['weapon_reach'],2)
+        passive.archived=True;passive.save();calc=computed(self.a)
+        self.assertEqual(hit_bonus(self.a,attack,calc),0)
+        self.assertEqual(calc['weapon_reach'],2)
+
+    def test_wide_swing_grip_change_and_undo_update_serialized_range(self):
+        from .views import serialize_char
+        passive=Entry.objects.create(kind='ability',name='Широкий замах',data={'category':'passive'})
+        attack=Entry.objects.create(kind='ability',name='Проверочный удар',data={'weapon':True,'keywords':['Ближний'],'category':'active','formula':'1Ор'})
+        self.a.abilities.add(passive,attack)
+        Item.objects.create(character=self.a,name='Меч',equipped=True,data={'dice':'1к8','item_type':'weapon','keywords':['Универсальное 1к10']})
+        self.start()
+        self.post(self.alice,{'op':'weapon.grip','character':self.a.pk,'item':computed(self.a)['weapon_id'],'grip':'two'})
+        self.a.refresh_from_db()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)
+        self.assertEqual(row['data']['range'],'Ближний 2')
+        self.assertEqual(row['hit_bonus'],1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)
+        self.assertEqual(row['data']['range'],'Ближний')

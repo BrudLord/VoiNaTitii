@@ -38,6 +38,12 @@ def computed(c):
     effects.extend({**e,**({'ability_scope':'weapon' if i.data.get('dice') else 'focus'} if (i.data.get('dice') or i.data.get('item_type')=='focus') and e.get('stat') in ['hit','damage'] else {})} for i in equipped for e in i.data.get('effects',[])
                    if not ((i.data.get('dice') and i!=selected or i.data.get('item_type')=='focus' and i.id!=focus_id) and e.get('stat') in ['hit','damage']))
     learned = [a for a in c.abilities.all() if not a.archived]
+    wide_swing=any(a.name=='Широкий замах' for a in learned)
+    weapon_words=held_keywords(selected.data) if selected else []
+    if wide_swing:
+        effects.append({'name':'Широкий замах','stat':'hit','value':1})
+        if 'Двуручное' in weapon_words and not any(re.fullmatch(r'Досягаемость [1-9]\d*',w) for w in weapon_words):
+            weapon_words.append('Досягаемость 1')
     for ability in learned:
         if ability.data.get('category') == 'passive' and not ability.data.get('aura') and not ability.data.get('manual'):
             effects.extend(e for e in ability.data.get('effects', []) if not e.get('manual'))
@@ -105,8 +111,8 @@ def computed(c):
             'initiative':mods['dex'] + sum(p.get('initiative',0) for p in enchantments),
             'forced_movement_reduction':sum(p.get('forced_movement_reduction',0) for p in enchantments),
             'massive_strikes':any(a.name=='Массивные удары' and not a.archived for a in c.abilities.all()),
-            'weapon_reach':sum(int(m[1]) for word in (held_keywords(selected.data) if selected else []) if (m:=re.fullmatch(r'Досягаемость (\d+)',word))),
-            'weapon_keywords':held_keywords(selected.data) if selected else [],
+            'weapon_reach':sum(int(m[1]) for word in weapon_words if (m:=re.fullmatch(r'Досягаемость (\d+)',word))),
+            'weapon_keywords':weapon_words,
             'versatile':versatile(selected.data) if selected else '',
             'reload_action':reload_action(selected.data) if selected else '',
             'needs_reload':bool(selected and reload_action(selected.data) and selected.data.get('needs_reload')),
