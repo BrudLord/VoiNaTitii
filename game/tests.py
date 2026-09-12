@@ -786,6 +786,24 @@ class GameTests(TestCase):
         self.post(self.bob,p,403)
         dust.refresh_from_db();self.assertEqual(dust.quantity,100);self.assertEqual(Event.objects.count(),0)
 
+    def test_crafting_rejects_same_stock_with_differently_formatted_ids(self):
+        fire=self.charm('Малое зачарование огня');self.prepare_crafter('Зачарователь',fire)
+        target=Item.objects.create(character=self.a,name='Клинок',data={'item_type':'weapon','dice':'1к6'})
+        dust=Item.objects.create(character=self.a,name='Пыль',quantity=25,data={'material_kind':'magic_dust'})
+        component=Item.objects.create(character=self.a,name='Камень',quantity=1,data={'material_kind':'elemental','element':'Огонь'})
+        p={'op':'craft.apply','character':self.a.id,'recipe':fire.id,'item':target.id,'item_revision':1,
+           'supplies':[{'item':dust.id,'revision':1,'quantity':25,'role':'dust'},
+                       {'item':str(dust.id),'revision':1,'quantity':25,'role':'dust'},
+                       {'item':component.id,'revision':1,'quantity':1,'role':'component'}]}
+        self.post(self.alice,p,400)
+        dust.refresh_from_db();component.refresh_from_db();target.refresh_from_db()
+        self.assertEqual(dust.quantity,25);self.assertEqual(component.quantity,1)
+        self.assertNotIn('enchantments',target.data);self.assertEqual(Event.objects.count(),0)
+        balanced=self.charm('Сбалансированный');self.prepare_crafter('Оружейник',balanced)
+        target.data['families']=['Мечи'];target.save()
+        self.post(self.alice,{**p,'recipe':balanced.id,'supplies':[{'item':str(target.id),'revision':1,'quantity':1}]},400)
+        target.refresh_from_db();self.assertEqual(target.quantity,1);self.assertNotIn('upgrades',target.data)
+
     def test_weaponsmith_bonuses_and_range_are_applied_to_selected_weapon(self):
         from .views import serialize_char
         balanced=self.charm('Сбалансированный');heavy=self.charm('Утяжеленный');taut=self.charm('Тугой');piercing=self.charm('Пробивающий')

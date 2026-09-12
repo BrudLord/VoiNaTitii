@@ -51,10 +51,10 @@ def apply(user,p):
     supplies=[];seen=set();dust=0;component=0
     for row in rows:
         if not isinstance(row,dict):raise ValueError('Проверьте материалы')
-        pk=row.get('item')
-        if pk in seen or pk==target.id:raise ValueError('Материал указан дважды или совпадает с предметом')
-        seen.add(pk)
-        item=stock(pk,row.get('revision'));count=amount(row.get('quantity'),item.quantity,1)
+        item=stock(row.get('item'),row.get('revision'))
+        if item.id in seen or item.id==target.id:raise ValueError('Материал указан дважды или совпадает с предметом')
+        seen.add(item.id)
+        count=amount(row.get('quantity'),item.quantity,1)
         if item.equipped:raise ValueError('Снимите предмет перед расходованием как материала')
         role=row.get('role','material')
         if role=='dust':
