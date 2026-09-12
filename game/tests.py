@@ -842,6 +842,24 @@ class GameTests(TestCase):
         self.prepare_crafter('Оружейник',balanced)
         self.start();self.post(self.alice,p,400)
 
+    def test_alchemy_production_spends_materials_and_can_be_undone(self):
+        for name,product in [('Малое зелье лечения','healing_potion'),('Малый яд','poison'),('Масло точности','accuracy_oil')]:
+            recipe=self.charm(name);self.prepare_crafter('Алхимик',recipe)
+            material=Item.objects.create(campaign=self.campaign,name='Травы',quantity=3,data={'item_type':'material'})
+            p={'op':'craft.apply','character':self.a.id,'recipe':recipe.id,'prepared':True,
+               'supplies':[{'item':material.id,'revision':material.revision,'quantity':2}]}
+            self.post(self.alice,{**p,'prepared':False},400)
+            made=Item.objects.get(pk=self.post(self.alice,p)['id']);material.refresh_from_db()
+            self.assertEqual(material.quantity,1);self.assertEqual(made.quantity,1)
+            self.assertEqual(made.character,self.a);self.assertEqual(made.data['alchemy'],product)
+            self.assertEqual(made.data['preparation_hours'],3)
+            self.post(self.alice,{'op':'undo'});made.refresh_from_db();material.refresh_from_db()
+            self.assertTrue(made.archived);self.assertEqual(material.quantity,3)
+            self.post(self.alice,{'op':'redo'});made.refresh_from_db();self.assertFalse(made.archived)
+            self.post(self.alice,{'op':'item.consume','id':made.id,'quantity':1})
+            self.post(self.alice,{'op':'undo'});self.post(self.alice,{'op':'undo'})
+            made.refresh_from_db();self.assertTrue(made.archived)
+
     def test_weapon_upgrade_validation_and_material_types(self):
         balanced=self.charm('Сбалансированный')
         self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Лук','data':{'item_type':'weapon','families':['Луки'],'upgrades':[balanced.id]}},400)
