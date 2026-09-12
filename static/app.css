@@ -54,3 +54,7 @@
 .combat-preparations{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.combat-preparations>.notice{flex:1 1 180px;margin:0;padding:7px 10px;font-size:.82rem;line-height:1.35}
 
 .stance-panel{display:flex;align-items:center;flex-wrap:wrap;gap:6px 16px;padding:8px 10px;font-size:.82rem}.stance-panel .toolbar{margin:0;gap:6px}.stance-panel label{margin:0}.stance-panel>span{flex:1 1 180px}
+
+.combat-state{margin:8px 0;border:1px solid var(--line);border-radius:8px;font-size:.82rem}.combat-state>summary{padding:8px 10px;cursor:pointer;line-height:1.4;overflow-wrap:anywhere}.combat-state>summary>span{margin-right:8px}.combat-warning{display:block;color:var(--accent);font-size:.78rem;margin-top:3px}.combat-state-body{padding:0 10px 8px}.combat-state-body .effectrow{margin:6px 0}.combat-state-body .notice{padding:6px 10px;margin:6px 0}.combat-state[open]>summary{border-bottom:1px solid var(--line);margin-bottom:6px}
+
+.combat-abilities .ability{padding:7px 0}.combat-abilities .ability h3{font-size:.85rem}.combat-abilities .ability .formula{font-size:.8rem}.combat-abilities .ability .pill{font-size:.65rem}.combat-abilities .ability>details{min-width:0}.combat-abilities .ability summary{overflow-wrap:anywhere}@media(min-width:1100px){.combat-abilities{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:20px;align-items:start}}
