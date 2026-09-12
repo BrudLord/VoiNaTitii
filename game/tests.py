@@ -2660,3 +2660,37 @@ class GameTests(TestCase):
         self.assertEqual(self.b.runtime['actions']['main'],0);self.assertEqual(self.b.runtime['actions']['minor'],1)
         self.post(self.alice,{'op':'undo'},400)
         self.post(self.bob,{'op':'undo'});held.refresh_from_db();self.assertTrue(held.data['on_ground'])
+
+    def test_normal_movement_counts_terrain_cost_and_can_be_undone(self):
+        self.start()
+        p={'op':'action.move','character':self.a.pk,'mode':'walk','cells':3,'cell_cost':2}
+        self.post(self.alice,{**p,'cells':4},400)
+        self.post(self.alice,p)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['move'],0)
+        self.assertEqual(Event.objects.latest('id').inputs['movement'],{'mode':'walk','cells':3,'cell_cost':2,'limit':3,'provokes':True})
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['move'],1)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['move'],0)
+
+    def test_step_uses_character_step_and_requires_normal_terrain(self):
+        self.start()
+        p={'op':'action.move','character':self.a.pk,'mode':'step','cells':1,'cell_cost':1}
+        self.post(self.alice,{**p,'cell_cost':2},400);self.post(self.alice,{**p,'cells':2},400)
+        self.post(self.alice,p);self.assertFalse(Event.objects.latest('id').inputs['movement']['provokes'])
+        self.post(self.alice,{'op':'undo'})
+        support=Entry.objects.create(kind='ability',name='Стихийная поддержка',data={'category':'active'})
+        self.a.abilities.add(support);self.a.refresh_from_db();self.a.runtime['elemental_support']={'mode':'Воздух','ability':support.pk};self.a.save()
+        self.post(self.alice,{**p,'cells':3});self.assertEqual(Event.objects.latest('id').inputs['movement']['limit'],3)
+
+    def test_movement_respects_turn_conditions_and_validates_numbers(self):
+        scene=self.start();p={'op':'action.move','character':self.a.pk,'mode':'walk','cells':1,'cell_cost':1}
+        for update in [{'cells':True},{'cells':0},{'cells':1.5},{'cell_cost':0},{'cell_cost':True},{'mode':'teleport'}]:self.post(self.alice,{**p,**update},400)
+        for status in ['Обездвижен','Сон','Страх']:
+            self.a.refresh_from_db();self.a.runtime['effects']=[{'key':'blocked','name':status,'status':status,'value':1}];self.a.save()
+            self.post(self.alice,p,400);self.post(self.alice,{**p,'mode':'step'},400)
+        self.a.runtime['effects']=[];self.a.save();self.turn(scene,self.alice);self.post(self.alice,p,400)
+
+    def test_movement_triggers_hyperthermia_once_and_never_changes_hp(self):
+        self.hyperthermia_setup()
+        self.post(self.alice,{'op':'action.move','character':self.a.pk,'mode':'walk','cells':6,'cell_cost':1})
+        self.assertEqual([e['damage'] for e in Event.objects.latest('id').inputs['periodic_damage']],[5])
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],10)

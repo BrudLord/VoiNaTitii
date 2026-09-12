@@ -641,6 +641,9 @@ def execute(user, p):
     elif op in ['action.ready','action.perform_ready']:
         from . import readied
         return (readied.reserve(user,p) if op=='action.ready' else readied.perform(user,p)) or {}
+    elif op == 'action.move':
+        from .movement import apply
+        apply(user,p)
     elif op == 'action.spend':
         c = owned(user, p['character'])
         scene = current_scene(c)
