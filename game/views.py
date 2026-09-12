@@ -92,6 +92,7 @@ def home(request):
 
 
 def serialize_char(c, user):
+    from .disarm import profile as disarm_profile
     scene = current_scene(c)
     abilities = []
     calc = computed(c)
@@ -129,7 +130,7 @@ def serialize_char(c, user):
                           'rolls_required': a.name not in [charged_arrows.NAME,weaving.NAME] and (rolls_required(a) or bool(a.data.get('weapon')))})
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
-            'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'periodic_damage':periodic.damage_events(c), 'abilities': abilities,
+            'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'periodic_damage':periodic.damage_events(c),'disarm':disarm_profile(c,calc,scene), 'abilities': abilities,
             'knowledge':knowledge.visible(c,user),
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
@@ -600,6 +601,9 @@ def execute(user, p):
         if p.get('mode') not in ['melee','ranged']:raise ValueError('Выберите способ атаки')
         change=Change(user,'Способ атаки · '+c.name,current_scene(c))
         change.watch(c).runtime['attack_mode']=p['mode'];change.finish()
+    elif op=='weapon.disarm':
+        from .disarm import apply
+        apply(user,p)
     elif op=='weapon.reload':
         weaponry.reload_weapon(user,p)
     elif op=='weapon.grip':

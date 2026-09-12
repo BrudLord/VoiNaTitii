@@ -2613,3 +2613,50 @@ class GameTests(TestCase):
         result=effective(self.a,a)
         self.assertEqual(result.data['target'],'single')
         self.assertEqual(keywords(result,computed(self.a)),['Дальнобойный 5','Метательное'])
+
+    def disarm_setup(self):
+        Item.objects.create(character=self.a,name='Цепь',equipped=True,data={'item_type':'weapon','dice':'1к4','keywords':['Захват','Досягаемость 1']})
+        held=Item.objects.create(character=self.b,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к8'})
+        self.start()
+        return held,{'op':'weapon.disarm','character':self.a.pk,'target':self.b.pk,'item':held.pk,'in_range':True,'outcome':'hit','roll_result':'16'}
+
+    def test_disarm_drops_selected_item_and_undo_restores_weapon(self):
+        held,p=self.disarm_setup();self.post(self.alice,p)
+        held.refresh_from_db();self.b.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(held.equipped);self.assertTrue(held.data['on_ground']);self.assertTrue(computed(self.b)['unarmed'])
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'});held.refresh_from_db();self.b.refresh_from_db()
+        self.assertTrue(held.equipped);self.assertNotIn('on_ground',held.data);self.assertFalse(computed(self.b)['unarmed'])
+        self.post(self.alice,{'op':'redo'});held.refresh_from_db();self.assertFalse(held.equipped)
+
+    def test_disarm_rejects_missing_roll_wrong_item_and_missing_capture(self):
+        held,p=self.disarm_setup()
+        for update in [{'roll_result':''},{'in_range':False},{'target':self.a.pk},{'item':0}]:self.post(self.alice,{**p,**update},400)
+        held.refresh_from_db();self.assertTrue(held.equipped)
+        self.a.items.update(equipped=False);self.post(self.alice,p,400)
+
+    def test_disarm_miss_preserves_item_and_external_target_needs_no_monster(self):
+        held,p=self.disarm_setup();self.post(self.alice,{**p,'outcome':'miss'})
+        held.refresh_from_db();self.assertTrue(held.equipped)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'target':0,'item':0,'external_item':'Посох врага'})
+        self.assertEqual(Event.objects.latest('id').inputs['disarm']['item'],'Посох врага')
+
+    def test_disarm_splits_one_item_from_stack(self):
+        held,p=self.disarm_setup();held.quantity=3;held.save();self.post(self.alice,p)
+        held.refresh_from_db();self.assertEqual(held.quantity,2);self.assertFalse(held.equipped)
+        dropped=self.b.items.get(data__on_ground=True,archived=False)
+        self.assertEqual(dropped.quantity,1)
+        self.post(self.alice,{'op':'undo'});held.refresh_from_db();dropped.refresh_from_db()
+        self.assertEqual(held.quantity,3);self.assertTrue(held.equipped);self.assertTrue(dropped.archived)
+
+    def test_disarmed_item_can_be_picked_up_and_blocks_stale_attacker_undo(self):
+        held,p=self.disarm_setup();held.data['keywords']=['Лёгкое'];held.save()
+        self.post(self.alice,p)
+        scene=Scene.objects.latest('id');self.turn(scene,self.alice)
+        self.post(self.bob,{'op':'item.equip','id':held.pk})
+        held.refresh_from_db();self.b.refresh_from_db()
+        self.assertTrue(held.equipped);self.assertNotIn('on_ground',held.data)
+        self.assertEqual(self.b.runtime['actions']['main'],0);self.assertEqual(self.b.runtime['actions']['minor'],1)
+        self.post(self.alice,{'op':'undo'},400)
+        self.post(self.bob,{'op':'undo'});held.refresh_from_db();self.assertTrue(held.data['on_ground'])

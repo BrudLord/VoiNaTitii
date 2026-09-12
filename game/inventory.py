@@ -62,6 +62,7 @@ def mutate(user,p):
             change.action(character,action)
             change.inputs['equipment_action']=action
         item.equipped=not item.equipped
+        if item.equipped:item.data.pop('on_ground',None)
         if item.equipped and item.data.get('dice'):character.runtime['weapon_id']=item.id
         if item.equipped and item.data.get('item_type')=='focus':character.runtime['focus_id']=item.id
         equip_other_armor(change,item)

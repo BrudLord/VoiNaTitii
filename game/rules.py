@@ -265,7 +265,8 @@ class Change:
         self.user, self.label, self.scene = user, label, scene
         self.objects = {}
         self.before = {}
-        self.inputs = inputs or {}
+        self.inputs = copy.deepcopy(inputs or {})
+        if scene:self.depend(scene)
 
     def watch(self, obj):
         key = ('scene:' if isinstance(obj, Scene) else 'item:' if isinstance(obj,Item) else 'character:') + str(obj.pk)
@@ -279,7 +280,7 @@ class Change:
         action_performed(self, character, action)
 
     def depend(self, obj):
-        key=('item:' if isinstance(obj,Item) else 'character:')+str(obj.pk)
+        key=('scene:' if isinstance(obj,Scene) else 'item:' if isinstance(obj,Item) else 'character:')+str(obj.pk)
         self.inputs.setdefault('dependencies',[])
         if key not in self.inputs['dependencies']:self.inputs['dependencies'].append(key)
 

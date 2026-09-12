@@ -136,6 +136,6 @@ def discharge(change,c,ability):
 
 
 def equip_action(item):
-    if not item.equipped and item.data.get('item_type')=='weapon' and set(item.data.get('keywords',[])).intersection({'Лёгкое','Легкое','Резервное'}):
+    if not item.equipped and not item.data.get('on_ground') and item.data.get('item_type')=='weapon' and set(item.data.get('keywords',[])).intersection({'Лёгкое','Легкое','Резервное'}):
         return 'minor'
     return 'main'
