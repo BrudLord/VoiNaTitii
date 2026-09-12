@@ -17,7 +17,20 @@ def mode(c):
 
 
 def effective(c,a):
-    if a.name!=NAME:return a
+    if a.name!=NAME:
+        if not learned(c,'Огонь и Вода'):return a
+        from .statuses import status_name
+        effects=copy.deepcopy(a.data.get('effects',[]))
+        changed=False
+        for effect in effects:
+            if status_name(effect) in ['Поджог','Влага'] and not effect.get('manual') and effect.get('source_bonus')!='Огонь и Вода':
+                effect['base_value']=effect.get('value',0)
+                effect['value']=effect['base_value']+1
+                effect['source_bonus']='Огонь и Вода'
+                changed=True
+        if not changed:return a
+        a=copy.copy(a);a.data=copy.deepcopy(a.data);a.data['effects']=effects
+        return a
     a=copy.copy(a);a.data=copy.deepcopy(a.data)
     a.data.update(damage=False,weapon=False,formula='',effects=[],rolls=False,manual=False,
                   action='minor' if learned(c,'Стихийное превосходство') else 'main',category='active')

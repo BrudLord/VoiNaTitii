@@ -2249,3 +2249,50 @@ class GameTests(TestCase):
         self.assertEqual(attack.data['action'],'main')
         self.post(self.alice,{'op':'undo'})
         attack.data['damage']=False;attack.save();self.post(self.alice,p,400)
+
+    def fire_water_setup(self):
+        passive=Entry.objects.create(kind='ability',name='Огонь и Вода',data={'category':'passive'})
+        ability=Entry.objects.create(kind='ability',name='Влажный удар',data={'action':'main','category':'active','circle':0,'damage':True,'formula':'1к6','target':'single','effects':[{'name':'Влага','stat':'status','value':2,'turns':3}]})
+        self.a.abilities.add(passive,ability);scene=self.start()
+        p={'op':'ability.use','character':self.a.id,'ability':ability.id,'targets':[self.b.id],'roll_result':'13','outcome':'hit'}
+        return passive,ability,scene,p
+
+    def test_fire_water_bonus_is_visible_and_applied_once_without_changing_catalogue(self):
+        from .views import serialize_char
+        passive,ability,scene,p=self.fire_water_setup()
+        self.a.refresh_from_db()
+        for _ in range(2):
+            row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==ability.id)
+            self.assertEqual(row['data']['effects'][0]['value'],3)
+            self.assertEqual(row['data']['effects'][0]['base_value'],2)
+        self.post(self.alice,p);self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['effects'][0]['value'],3)
+        ability.refresh_from_db();self.assertEqual(ability.data['effects'][0]['value'],2)
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_fire_water_bonus_enters_reaction_strength_before_combination(self):
+        passive,ability,scene,p=self.fire_water_setup()
+        self.b.refresh_from_db();self.b.runtime['effects']=[{'key':'shock','name':'Шок','status':'Шок','stat':'status','value':2,'duration':'turns','remaining':2}];self.b.save()
+        self.post(self.alice,{**p,'reactions':{f'{self.b.pk}:0':'shock'}})
+        self.b.refresh_from_db();effect=self.b.runtime['effects'][0]
+        self.assertEqual((effect['name'],effect['value'],effect['duration']),('Оцепенение',5,'actions'))
+
+    def test_fire_water_miss_external_target_and_archived_passive(self):
+        from .stances import effective
+        passive,ability,scene,p=self.fire_water_setup()
+        self.post(self.alice,{**p,'outcome':'miss'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'targets':[]})
+        self.assertEqual(Event.objects.latest('id').inputs['external_effects'][0]['value'],3)
+        self.post(self.alice,{'op':'undo'})
+        passive.archived=True;passive.save()
+        self.post(self.alice,p);self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],2)
+
+    def test_fire_water_only_strengthens_its_two_statuses(self):
+        from .stances import effective
+        passive,ability,scene,p=self.fire_water_setup()
+        ability.data['effects']=[{'name':name,'stat':'status','value':2} for name in ['Поджог','Влага','Шок','Сон']]
+        ability.data['effects'].append({'name':'Поджог','stat':'status','value':2,'manual':True})
+        transformed=effective(self.a,ability)
+        self.assertEqual([e['value'] for e in transformed.data['effects']],[3,3,2,2,2])
+        self.assertEqual([e['value'] for e in effective(self.a,transformed).data['effects']],[3,3,2,2,2])
