@@ -99,7 +99,7 @@ def serialize_char(c, user):
     learned = {a.id:a for a in c.abilities.all() if not a.archived}
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False,personal_character__isnull=True)})
     for a in learned.values():
-        definition={'id':a.id,'kind':a.kind,'name':a.name,'description':a.description,'data':copy.deepcopy(a.data),'personal':a.personal_character_id==c.id}
+        definition={'id':a.id,'kind':a.kind,'name':a.display_name,'description':a.description,'data':copy.deepcopy(a.data),'personal':a.personal_character_id==c.id}
         a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)),calc)
         d = copy.deepcopy(a.data)
         charged=charged_arrows.profile(c,a)
@@ -113,7 +113,7 @@ def serialize_char(c, user):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера','Линия','Конус'))),d.get('range',''))
         minor_attack=stances.minor_attack(c,a)
         hit_bonus = targeting.hit_bonus(c,a,calc)
-        abilities.append({'definition':definition,'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
+        abilities.append({'definition':definition,'id': a.id, 'name': a.display_name, 'description': a.description, 'data': d,
                           'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
                           'attack_setup':setup, 'charged_arrows':charged,
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
@@ -787,7 +787,7 @@ def use_ability(user, p, embedded=False):
     setup=prepared_attacks.validate(c,a,p,ids) if not aura else None
     weave=weaving.resolve(c,a,p,ids) if not aura else None
     stance=stances.activation(c,a,p) if not aura else None
-    change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
+    change = Change(user, ('Получатели ауры · ' if aura else '') + a.display_name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
     if not aura and not embedded:change.action(c,'reaction' if p.get('as_reaction') else d.get('action','main'))
@@ -809,7 +809,7 @@ def use_ability(user, p, embedded=False):
             target.runtime['effects']=[e for e in target.runtime.get('effects',[]) if e['key'] not in row['remove']]
         healing=[{'character':r['character'],'hp':r['hp']} for r in pool['allocations'] if r['hp']]
         if healing:
-            c.runtime.setdefault('pending_heals',{})[str(uuid.uuid4())]={'scene':scene.id,'name':a.name,'allocations':healing,'dice':pool['dice']}
+            c.runtime.setdefault('pending_heals',{})[str(uuid.uuid4())]={'scene':scene.id,'name':a.display_name,'allocations':healing,'dice':pool['dice']}
     if not aura and p.get('outcome')!='miss':
         contributions=boulder_bonus(c,a,computed(c),scene)
         change.inputs['damage_contributions']=contributions
@@ -854,7 +854,7 @@ def use_ability(user, p, embedded=False):
                     else:
                         t.runtime['temp'] = max(t.runtime.get('temp', 0), value)
                 else:
-                    effect = {'key': e.get('key') or f'{a.id}:{index}', 'name': e.get('name', a.name),
+                    effect = {'key': e.get('key') or f'{a.id}:{index}', 'name': e.get('name', a.display_name),
                               'stat': e['stat'], 'value': value, 'keyword': e.get('keyword', ''),
                               'source': c.name, 'source_id': c.id, 'ability_id': a.id,
                               'duration': 'aura' if aura else e.get('duration', 'turns'),

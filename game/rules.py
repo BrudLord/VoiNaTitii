@@ -42,7 +42,7 @@ def computed(c):
     swings=[(a,wide_swing_profile(a)) for a in learned if wide_swing_profile(a) is not None]
     weapon_words=held_keywords(selected.data) if selected else []
     for ability,profile in swings:
-        effects.append({'name':ability.name,'stat':'hit','value':profile['hit']})
+        effects.append({'name':ability.display_name,'stat':'hit','value':profile['hit']})
     if 'Двуручное' in weapon_words and swings:
         reach=max([p['reach'] for a,p in swings]+[int(m[1]) for w in weapon_words if (m:=re.fullmatch(r'Досягаемость (\d+)',w))])
         weapon_words=[w for w in weapon_words if not re.fullmatch(r'Досягаемость (\d+)',w)]

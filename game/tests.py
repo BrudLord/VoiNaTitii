@@ -2853,3 +2853,41 @@ class GameTests(TestCase):
         call_command('structure_catalog',stdout=StringIO())
         call_command('audit_book',stdout=StringIO())
         personal.refresh_from_db();self.assertEqual(personal.data,original_data);self.assertEqual(personal.description,'Личный текст')
+
+    def test_personal_passive_rename_preserves_boulder_mechanics(self):
+        from .views import serialize_char
+        boulder=Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive','stat':'cha'})
+        self.a.abilities.add(boulder)
+        self.post(self.alice,{'op':'character.ability.save','character':self.a.pk,'revision':self.a.revision,'id':boulder.pk,'name':'Каменный кулак','description':'Моё имя','data':boulder.data})
+        self.a.refresh_from_db();personal=self.a.personal_abilities.get()
+        self.assertEqual(personal.name,'Глыба');self.assertEqual(personal.display_name,'Каменный кулак')
+        attack=Entry(name='Удар',data={'damage':True,'formula':'1к6','keywords':['Ближний']})
+        self.assertIn('+3 [Земля]',formula(self.a,attack))
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==personal.pk)
+        self.assertEqual(row['name'],'Каменный кулак');self.assertEqual(row['definition']['name'],'Каменный кулак')
+        self.post(self.alice,{'op':'character.ability.save','character':self.a.pk,'revision':self.a.revision,'id':personal.pk,'name':'Камень','description':'Повторная правка','data':personal.data})
+        personal.refresh_from_db();self.assertEqual(personal.name,'Глыба');self.assertEqual(personal.display_name,'Камень')
+        self.assertIn('+3 [Земля]',formula(self.a,attack))
+
+    def test_personal_stance_rename_preserves_activation_and_journal_name(self):
+        from .views import serialize_char
+        stance=Entry.objects.create(kind='ability',name='Стихийная поддержка',data={'category':'active','circle':1,'action':'main'})
+        self.a.abilities.add(stance)
+        self.post(self.alice,{'op':'character.ability.save','character':self.a.pk,'revision':self.a.revision,'id':stance.pk,'name':'Четыре ветра','description':'Моя стойка','data':stance.data})
+        self.a.refresh_from_db();personal=self.a.personal_abilities.get()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==personal.pk)
+        self.assertEqual(row['stance_modes'],['Огонь','Вода','Земля','Воздух'])
+        self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':personal.pk,'stance_mode':'Земля','targets':[]})
+        self.a.refresh_from_db();self.assertEqual(computed(self.a)['support'],'Земля')
+        self.assertIn('Четыре ветра',Event.objects.latest('id').label)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertFalse(computed(self.a)['support'])
+
+    def test_personal_seeking_arrow_name_survives_derived_attack_profile(self):
+        from .views import serialize_char
+        ability=Entry.objects.create(kind='ability',name='Ищущие стрелы',personal_character=self.a,data={'display_name':'Возвращение стрелы','category':'active','circle':2})
+        self.a.abilities.add(ability)
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==ability.pk)
+        self.assertEqual(row['name'],'Возвращение стрелы')
+        self.assertEqual(row['definition']['name'],'Возвращение стрелы')
+        self.assertTrue(row['data']['seeking'])

@@ -27,8 +27,9 @@ def save(user,p):
     if 'wide_swing' not in data and wide_swing_profile(original) is not None:
         data['wide_swing']=wide_swing_profile(original)
     data['reviewed']=True
+    data['display_name']=name
     entry=original if original.personal_character_id==c.pk else Entry(kind='ability',personal_character=c,source=original.source)
-    entry.name=name;entry.description=str(p.get('description',''))[:30000];entry.data=data;entry.save()
+    entry.name=original.name;entry.description=str(p.get('description',''))[:30000];entry.data=data;entry.save()
     if entry.pk!=original.pk:
         c.abilities.remove(original);c.abilities.add(entry)
     c.revision+=1;c.save(update_fields=['revision'])

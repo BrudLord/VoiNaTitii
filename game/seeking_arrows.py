@@ -13,7 +13,7 @@ def effective(ability):
     result = copy.copy(ability)
     result.data = {**(standard.data if standard else {'system': True, 'weapon': True, 'damage': True, 'formula': '1Ор + Мод'}),
                    'circle': ability.data.get('circle', 2), 'action': 'minor', 'category': 'active',
-                   'manual': False, 'seeking': True, 'target': 'single'}
+                   'manual': False, 'seeking': True, 'target': 'single', 'display_name':ability.display_name}
     return result
 
 

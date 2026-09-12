@@ -18,6 +18,10 @@ class Entry(models.Model):
     archived = models.BooleanField(default=False)
     source = models.CharField(max_length=200, blank=True)
 
+    @property
+    def display_name(self):
+        return self.data.get('display_name',self.name) if self.personal_character_id else self.name
+
     def __str__(self):
         return self.name
 
