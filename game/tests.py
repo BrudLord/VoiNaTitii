@@ -1732,3 +1732,74 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'undo'})
         self.post(self.gm,{'op':'undo'})
         self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_literal_attack_hit_bonuses_are_scoped_to_the_named_ability(self):
+        from .views import serialize_char
+        expected={'Молот света':2,'Точный выстрел':3,'Неожиданный удар':1,'Точный бросок':3,'Обманный удар':4}
+        for name,value in expected.items():
+            desc,data,source=self.book_row(name)
+            self.assertEqual(data['attack_hit_bonus'],value)
+            ability=Entry.objects.create(kind='ability',name=name,description=desc,data=data)
+            self.a.abilities.add(ability)
+            row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==ability.id)
+            self.assertEqual(row['hit_bonus'],value)
+        self.assertEqual(computed(self.a)['hit'],0)
+        _,hammer,_=self.book_row('Молот света')
+        self.assertTrue(any(e['name']=='БП' and e['duration']=='battle' for e in hammer['effects']))
+
+    def test_numerical_superiority_uses_bp_only_and_does_not_double_it_on_critical(self):
+        from .targeting import resolve
+        desc,data,source=self.book_row('Численное превосходство')
+        ability=Entry.objects.create(kind='ability',name='Численное превосходство',description=desc,data=data)
+        self.a.abilities.add(ability)
+        Item.objects.create(character=self.a,name='Цепь',equipped=True,data={'item_type':'weapon','dice':'1к6','families':data.get('requires',[]),'no_proficiency':True})
+        self.b.runtime['effects']=[{'key':'status:БП','name':'БП','stat':'target_hit','value':2,'duration':'turns','remaining':3},
+                                   {'key':'other','name':'Иной бонус','stat':'target_hit','value':4,'duration':'battle'}]
+        self.b.save();scene=self.start()
+        before=formula(self.a,ability,True)
+        p={'op':'ability.use','character':self.a.id,'ability':ability.id,'targets':[self.b.id],'outcome':'critical','roll_result':'Крит, урон 8'}
+        self.post(self.alice,p)
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertEqual(row['bp_damage'],2);self.assertEqual(row['target_bonus'],6)
+        self.assertEqual(row['damage'],before+' +2 [БП]')
+        self.assertEqual(row['hit'],6)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'targets':[],'external_bp':3})
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertEqual(row['damage'],before+' +3 [БП]')
+        self.assertEqual(row['bp_damage'],3)
+
+    def test_target_damage_formula_contains_selected_arrow_contributions_once(self):
+        scene,prep,shot=self.charged_setup()
+        self.a.abilities.add(Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive'}))
+        self.post(self.alice,prep)
+        self.post(self.alice,{**shot,'outcome':'critical'})
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertIn('4к6',row['damage'])
+        self.assertEqual(row['damage'].count('+2 [Земля]'),2)
+
+    def test_target_damage_rider_is_not_copied_to_other_targets(self):
+        from .targeting import finalize
+        from types import SimpleNamespace
+        change=SimpleNamespace(inputs={'attack_targets':[{'id':1,'damage':'1к6'},{'id':2,'damage':'1к6'}],
+            'charged_arrows':{'hit':True,'target_ids':[2],'choices':[{'damage_contribution':{'value':2,'type':'Земля'}}]}})
+        finalize(change)
+        self.assertEqual([r['damage'] for r in change.inputs['attack_targets']],['1к6','1к6 +2 [Земля]'])
+
+    def test_master_attack_bonus_parameters_are_validated(self):
+        for data in [{'attack_hit_bonus':'3'},{'attack_hit_bonus':1001},{'damage_from_bp':'yes'}]:
+            self.post(self.gm,{'op':'entry.save','kind':'ability','name':'Проверка бонуса','data':data},400)
+        self.post(self.gm,{'op':'entry.save','kind':'ability','name':'Проверка бонуса','data':{'attack_hit_bonus':-2,'damage_from_bp':True}})
+        data=Entry.objects.get(name='Проверка бонуса').data
+        self.assertEqual(data['attack_hit_bonus'],-2);self.assertTrue(data['damage_from_bp'])
+
+    def test_weapon_family_requirement_uses_selected_weapon_without_duplicate_keywords(self):
+        from .rules import availability
+        scene=self.start()
+        chain=Item.objects.create(character=self.a,name='Цепь',equipped=True,data={'item_type':'weapon','dice':'1к6','families':['Цепы']})
+        bow=Item.objects.create(character=self.a,name='Лук',equipped=True,data={'item_type':'weapon','dice':'1к6','families':['Луки']})
+        ability=Entry.objects.create(kind='ability',name='Удар цепью',data={'weapon':True,'requires':['Цепы']})
+        self.a.refresh_from_db();self.a.runtime['weapon_id']=chain.id
+        self.assertEqual(availability(self.a,ability,scene),'')
+        self.a.runtime['weapon_id']=bow.id
+        self.assertEqual(availability(self.a,ability,scene),'Нужно подходящее оружие')

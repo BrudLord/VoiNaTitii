@@ -66,7 +66,7 @@ def apply(change, character, targets, choices, payload, *, count_use=True, log_k
                               'stat':'hit','value':value,'duration':'battle','source':character.name,'source_id':character.id})
     hit=payload.get('outcome','hit')!='miss'
     change.inputs[log_key]={'choices':choices,'hit':hit,'penalty_added':1 if uses and count_use else 0,
-                                    'use':uses+(1 if count_use else 0),'external_target':not targets}
+                                    'use':uses+(1 if count_use else 0),'external_target':not targets,'target_ids':[t.pk for t in targets]}
     change.label+=' · '+', '.join(o['name'] for o in choices)
     if not hit:return
     change.inputs.setdefault('damage_contributions',[]).extend(o['damage_contribution'] for o in choices if o.get('damage_contribution'))

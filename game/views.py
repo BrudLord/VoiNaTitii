@@ -637,6 +637,11 @@ def validate_entry(d):
         raise ValueError('Некорректный тип действия')
     if d.get('category', 'active') not in ['active', 'passive', 'noncombat']:
         raise ValueError('Некорректная категория')
+    if type(d.get('attack_hit_bonus',0)) is not int:
+        raise ValueError('Бонус попадания умения должен быть целым числом')
+    bounded(d.get('attack_hit_bonus',0),-1000,1000)
+    if type(d.get('damage_from_bp',False)) is not bool:
+        raise ValueError('Укажите, зависит ли урон от БП')
     for field in ['keywords', 'requires','subraces','allowed_schools','families']:
         if field in d and (not isinstance(d[field], list) or any(not isinstance(x, str) for x in d[field])):
             raise ValueError('Ключевые слова должны быть списком строк')
@@ -776,6 +781,7 @@ def use_ability(user, p):
     charged_arrows.apply(change,c,a,targets,charged,p)
     prepared_attacks.apply(change,c,a,targets,setup)
     mystic_arrows.apply(change,c,[targets[pk] for pk in ids],arrows,p)
+    targeting.finalize(change)
     if p.get('use_ready') and not aura:
         from .readied import resolve
         resolve(change,c,scene,p,d.get('action','main'))

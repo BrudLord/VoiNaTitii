@@ -98,10 +98,14 @@ def abilities(text):
         if healing and not expressions: data['formula']=healing[1].replace('\\','')
         fixed_damage=re.search(r'Цель получает (\d+) урона',description)
         if fixed_damage and not expressions: data.update(formula=fixed_damage[1],damage=True)
+        own_hit=re.search(r'(?:^|\.\s+)Вы получаете ([+−-]\d+) к попаданию для этой атаки\.',description)
+        data['attack_hit_bonus']=int(own_hit[1].replace('−','-')) if own_hit and not re.search(r'если|когда',description,re.I) else 0
+        data['damage_from_bp']=bool(re.search(r'(?:^|\.\s+)Урон увеличивается на размер БП\.',description))
         data['rolls']=category=='active' and ('урона' in description or bool(healing)) or category=='active' and (bool(expressions) or bool(re.search(r'\d+к\d+|брос[а-я]*|провер[а-я]*',description,re.I)))
         if data.get('weapon') and school: data['requires']=[school]
         # Only literal, unconditional single-target clauses are compiled automatically.
-        simple=not re.search(r'если|когда|вместо|случайн|кажд|выбер|выбор|можете|следующ|при |попадани|промах| или |аура|стойка',description+' '+keys,re.I)
+        simple_description=description.replace(own_hit[0],'.') if own_hit and data['attack_hit_bonus'] else description
+        simple=not re.search(r'если|когда|вместо|случайн|кажд|выбер|выбор|можете|следующ|при |попадани|промах| или |аура|стойка',simple_description+' '+keys,re.I)
         from .book_effects import literal_effects
         effects,target=literal_effects(description) if simple and category=='active' else ([],None)
         if effects: data.update(effects=effects,target=target,automation_notes='Числовые эффекты применяются автоматически; остальное — по описанию.')

@@ -69,7 +69,7 @@ def computed(c):
         else:
             other_armor += int(item.data.get('armor', 0))
         if not item.data.get('dice') or item == selected:
-            keywords += item.data.get('keywords', [])
+            keywords += list(dict.fromkeys(item.data.get('keywords', [])+item.data.get('families',[])))
         if selected and item.pk == selected.pk:
             weapon = item.data['dice']
             trained_family = next((name for name in item.data.get('families',[]) if name in trained),None)
@@ -99,7 +99,7 @@ def computed(c):
             'enchantments':enchantments, 'focus_id':focus_id,
             'initiative':mods['dex'] + sum(p.get('initiative',0) for p in enchantments),
             'forced_movement_reduction':sum(p.get('forced_movement_reduction',0) for p in enchantments),
-            'weapon_keywords':selected.data.get('keywords',[]) if selected else [],
+            'weapon_keywords':list(dict.fromkeys(selected.data.get('keywords',[])+selected.data.get('families',[]))) if selected else [],
             'weapon_range_bonus':sum(p.get('range',0) for p in weapon_upgrades),
             'armored_hit':sum(p.get('armored_hit',0) for p in weapon_upgrades),
             'attack_mode':c.runtime.get('attack_mode','melee'),
