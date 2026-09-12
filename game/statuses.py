@@ -5,12 +5,13 @@ STATUS = {'Поджог':('status',1),'Влага':('status',1),'Кислота'
           'Мороз':('speed',-1),'Яд':('status',1),'Благословение':('hit',1),'Проклятье':('hit',-1),
           'Ослабление':('damage',-1),'Замедление':('speed',-1),'Оглушение':('status',1),
           'Кровотечение':('status',1),'Продолжительный урон':('status',1),'Сон':('status',1),'Страх':('status',1),
-          'Обездвижен':('status',1),'Ослепление':('status',1),'Метка':('status',1),'БП':('target_hit',1),'Сбит с ног':('status',1)}
+          'Обездвижен':('status',1),'Ослепление':('status',1),'Метка':('status',1),'БП':('target_hit',1),'Сбит с ног':('status',1),'Насыщение':('status',1)}
 NEUTRAL=[('Поджог','Влага'),('Поджог','Мороз'),('Кислота','Шок'),('Благословение','Проклятье'),('Мороз','Яд')]
 CONSTRUCTIVE=[('Благословение','Поджог','Священное пламя'),('Благословение','Яд','Вирус'),('Благословение','Мороз','Чистые льды'),
  ('Благословение','Влага','Очищение'),('Влага','Кислота','Взрыв'),('Влага','Шок','Оцепенение'),('Влага','Мороз','Заморозка'),
  ('Проклятье','Поджог','Некропламя'),('Проклятье','Кислота','Размякшая плоть'),('Проклятье','Шок','Проклятый разряд'),
  ('Проклятье','Мороз','Ледяная тьма'),('Мороз','Шок','Сверхпроводник'),('Поджог','Яд','Гипертермия')]
+ELEMENTAL = list(STATUS)[:8]+[r for _,_,r in CONSTRUCTIVE]
 STUN = ['Оглушение','Оцепенение','Заморозка']
 
 
@@ -28,7 +29,7 @@ def reaction_options(target, incoming):
         if not other or name==other: continue
         result=next(('Нейтрализация' for a,b in NEUTRAL if {a,b}=={name,other}),None)
         result=result or next((r for a,b,r in CONSTRUCTIVE if {a,b}=={name,other}),None)
-        if name=='Насыщение' and other in list(STATUS)[:8]: result='Насыщение'
+        if name=='Насыщение' and other in ELEMENTAL: result='Насыщение'
         if result: options.append({'key':old['key'],'name':result,'effect':old})
     return options
 
@@ -45,7 +46,12 @@ def apply_status(target, incoming, choice=None):
         target.runtime['effects'].remove(old)
         if result=='Нейтрализация': return
         if result=='Насыщение':
-            old.update(value=(-strength if old['value']<0 else strength),remaining=3)
+            old['value']=-strength if old['value']<0 else strength
+            if old.get('duration','turns')=='turns':
+                old['remaining']=max(old.get('max_turns',3),old.get('remaining',0))
+            if other_note:=old.get('note'):
+                if other_note.startswith(('В начале хода','За каждое совершённое действие')):
+                    old['note']='Сила эффекта увеличена Насыщением. Изменение ХП вносит мастер.'
             put_effect(target,old);return
         # HP changes from reaction strength remain manual, as agreed with the user.
         incoming.update(name=result,status=result,key='status:'+result,stat='status',value=strength,
@@ -54,6 +60,8 @@ def apply_status(target, incoming, choice=None):
         if result=='Некропламя':incoming['note']=f'В начале хода: {strength*2} продолжительного урона. ХП вносит мастер.'
         if result in ['Священное пламя','Вирус']:incoming['note']=f'В начале хода цели: {strength} урона Вокруг 1. ХП вносит мастер.'
         if result=='Размякшая плоть': incoming.update(stat='damage',value=-strength)
+    elif name=='Насыщение':
+        return
     elif name:
         incoming['key']='status:'+name
         incoming['status']=name

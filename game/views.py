@@ -529,7 +529,7 @@ def execute(user, p):
         stat,sign=STATUS.get(name,(p.get('stat','status'),1))
         effect={'key':'status:'+name,'name':name,'status':name if name in STATUS else '',
                 'stat':stat,'value':bounded(p.get('value',1),0,1000)*sign,'duration':p.get('duration','turns'),
-                'remaining':bounded(p.get('turns',3),1,100),'source':user.username,'source_id':None}
+                'remaining':bounded(p.get('turns',3),1,100),'max_turns':bounded(p.get('turns',3),1,100),'source':user.username,'source_id':None}
         if p.get('source_id'):
             source=get_object_or_404(Character,pk=p['source_id'])
             scene=current_scene(c)
@@ -840,7 +840,7 @@ def use_ability(user, p, embedded=False):
                               'stat': e['stat'], 'value': value, 'keyword': e.get('keyword', ''),
                               'source': c.name, 'source_id': c.id, 'ability_id': a.id,
                               'duration': 'aura' if aura else e.get('duration', 'turns'),
-                              'remaining': int(e.get('turns', 3))}
+                              'remaining': int(e.get('turns', 3)), 'max_turns': int(e.get('turns', 3))}
                     if aura:
                         effect.update(key=f'aura:{c.id}:{a.id}:{index}', aura_source=f'{c.id}:{a.id}')
                     effect['status']=e.get('status') or status_name(effect)

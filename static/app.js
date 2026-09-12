@@ -205,7 +205,8 @@ function reactionOptions(c,e){
         const other=old.status||(old.name||'').replace(/\s+[+-]?\d+$/,'');
         if(name===other)return [];
         const same=pair=>pair.slice(0,2).includes(name)&&pair.slice(0,2).includes(other);
-        const result=(S.rules?.neutral||[]).some(same)?'Нейтрализация':(S.rules?.constructive||[]).find(same)?.[2];
+        const elemental=['Поджог','Влага','Кислота','Шок','Мороз','Яд','Благословение','Проклятье',...(S.rules?.constructive||[]).map(r=>r[2])];
+        const result=name==='Насыщение'&&elemental.includes(other)?'Насыщение':(S.rules?.neutral||[]).some(same)?'Нейтрализация':(S.rules?.constructive||[]).find(same)?.[2];
         return result?[{id:old.key,name:result+' · '+other}]:[];
     });
 }

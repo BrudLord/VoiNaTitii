@@ -2414,3 +2414,38 @@ class GameTests(TestCase):
         self.post(self.alice,p)
         self.assertEqual([(r['damage'],r['action']) for r in Event.objects.latest('id').inputs['periodic_damage']],[(4,'main')])
         self.assertNotIn('periodic_damage',Event.objects.latest('id').inputs['weaving'])
+
+    def test_saturation_instant_strengthens_selected_element_and_refreshes_duration(self):
+        from .statuses import apply_status, reaction_options
+        self.a.runtime['effects']=[{'key':'curse','name':'Проклятье','stat':'hit','value':-2,'duration':'turns','remaining':1,'max_turns':5}, {'key':'wet','name':'Влага','stat':'status','value':1,'duration':'turns','remaining':2}]
+        incoming={'name':'Насыщение','stat':'status','value':3}
+        self.assertEqual([r['key'] for r in reaction_options(self.a,incoming)],['curse','wet'])
+        apply_status(self.a,incoming,'curse')
+        curse=next(e for e in self.a.runtime['effects'] if e['key']=='curse')
+        self.assertEqual((curse['value'],curse['remaining']),(-5,5))
+        self.assertEqual(len(self.a.runtime['effects']),2)
+        self.a.runtime['effects']=[];apply_status(self.a,incoming)
+        self.assertEqual(self.a.runtime['effects'],[])
+
+    def test_saturation_supports_constructive_effects_without_changing_duration_kind(self):
+        from .statuses import apply_status
+        for name,duration in [('Некропламя','battle'),('Заморозка','actions')]:
+            self.a.runtime['effects']=[{'key':'e','status':name,'value':2,'duration':duration}]
+            apply_status(self.a,{'name':'Насыщение','stat':'status','value':1},'e')
+            self.assertEqual(self.a.runtime['effects'][0]['value'],3)
+            self.assertEqual(self.a.runtime['effects'][0]['duration'],duration)
+            self.assertNotIn('remaining',self.a.runtime['effects'][0])
+
+    def test_saturation_ability_requires_choice_and_supports_undo(self):
+        from .book_effects import literal_effects
+        scene=self.start();self.b.refresh_from_db()
+        self.b.runtime['effects']=[{'key':'wet','name':'Влага','stat':'status','value':2,'duration':'turns','remaining':1}];self.b.save()
+        effects,target=literal_effects('Цель получает Насыщение 3.')
+        ability=Entry.objects.create(kind='ability',name='Усиление',data={'category':'active','action':'main','circle':0,'effects':effects,'target':target,'rolls':False})
+        self.a.abilities.add(ability)
+        p={'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.b.pk]}
+        self.post(self.alice,p,400)
+        self.post(self.alice,{**p,'reactions':{f'{self.b.pk}:0':'wet'}})
+        self.b.refresh_from_db();self.assertEqual((self.b.runtime['effects'][0]['value'],self.b.runtime['effects'][0]['remaining']),(5,3))
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db()
+        self.assertEqual((self.b.runtime['effects'][0]['value'],self.b.runtime['effects'][0]['remaining']),(2,1))
