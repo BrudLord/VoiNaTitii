@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools, knowledge, weaponry, crafting
+from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token, reflex_eligible
 from .alignment import schema as alignment_schema, validate_alignment
@@ -23,7 +23,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
 from .models import Character, Campaign, Squad, Membership, Entry, Item, Session, Scene, Event, Clock, Receipt
-from .statuses import STATUS, NEUTRAL, CONSTRUCTIVE, status_name, apply_status
+from .statuses import STATUS, NEUTRAL, CONSTRUCTIVE, STUN, status_name, apply_status, skip_stunned_action
 from .rules import STATS, ACTIONS, computed, fresh, definition, limit, formula, current_scene, availability, put_effect, Change, undo, rolls_required
 
 
@@ -99,7 +99,7 @@ def serialize_char(c, user):
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
         d = copy.deepcopy(a.data)
-        if roll_pools.profile(a) or crafting.profile(a) or a.name in ['Молниеносные рефлексы','Интуитивное владение','Мистическая точность']:d['manual']=False
+        if roll_pools.profile(a) or crafting.profile(a) or a.name in ['Молниеносные рефлексы','Интуитивное владение','Мистическая точность','Мистические стрелы','Двойной заряд']:d['manual']=False
         d['keywords']=weaponry.keywords(a,calc)
         if d.get('weapon'):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
@@ -107,6 +107,7 @@ def serialize_char(c, user):
         if d.get('system') and any(x.name=='Мистическая точность' for x in learned.values()):
             hit_bonus += calc['mods'][calc['primary']]
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
+                          'mystic_arrows':mystic_arrows.profile(c,a,calc),
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
@@ -409,7 +410,7 @@ def execute(user, p):
             change.watch(c)
             for item in c.items.filter(equipped=True,archived=False):change.depend(item)
             enchantments.start_battle(c,computed(c))
-            c.runtime.update(used={}, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
+            c.runtime.update(used={}, mystic_arrows=0, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
                              stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
         change.finish()
         return {'id': scene.id}
@@ -436,13 +437,21 @@ def execute(user, p):
                 from .alchemy import end_battle
                 end_battle(change,c)
                 c.runtime.pop('readied',None);c.runtime.pop('readied_queue',None);c.runtime.pop('initiative_shift',None)
-                c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
+                c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, mystic_arrows=0, temp=0, stun_pending=0, actions=dict(ACTIONS))
                 c.runtime['hp'] = computed(c)['max_hp']
         else:
             c = chars[current.id]
+            skipped=0
+            for action_kind in ACTIONS:
+                while c.runtime.get('actions',{}).get(action_kind,0)>0 and skip_stunned_action(c):
+                    c.runtime['actions'][action_kind]-=1
+                    skipped+=1
+            if skipped:change.inputs['stun_skipped']=skipped
             c.runtime['turns'] = c.runtime.get('turns', 0) + 1
             effects = []
             for e in c.runtime.get('effects', []):
+                if status_name(e) in STUN and e.get('duration')!='aura':
+                    e['duration']='actions';e.pop('remaining',None)
                 if e.get('duration') == 'turns':
                     e['remaining'] -= 1
                     if e['remaining'] <= 0:
@@ -585,12 +594,7 @@ def execute(user, p):
         if c.runtime.get('stun_pending',0):
             if p.get('exchange'):
                 raise ValueError('Оглушение: сначала укажите пропущенное действие')
-            c.runtime['stun_pending']-=1
-            for e in list(c.runtime.get('effects',[])):
-                if status_name(e) in ['Оглушение','Оцепенение','Заморозка']:
-                    e['value']=max(0,e['value']-1)
-                    if not e['value']: c.runtime['effects'].remove(e)
-                    break
+            skip_stunned_action(c)
         if p.get('exchange'):
             if key != 'main' or p['exchange'] not in ['minor', 'move']:
                 raise ValueError('Можно обменять основное на малое или движение')
@@ -676,6 +680,7 @@ def use_ability(user, p):
         raise ValueError('Выберите цель')
     if d.get('target') == 'single' and len(ids) > 1:
         raise ValueError('Выберите одну цель')
+    arrows=mystic_arrows.resolve(c,a,computed(c),p) if not aura else []
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
@@ -746,6 +751,7 @@ def use_ability(user, p):
                         put_effect(t,effect)
                     else:
                         apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'))
+    mystic_arrows.apply(change,c,[targets[pk] for pk in ids],arrows,p)
     if p.get('use_ready') and not aura:
         from .readied import resolve
         resolve(change,c,scene,p,d.get('action','main'))

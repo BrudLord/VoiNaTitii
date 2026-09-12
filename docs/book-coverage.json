@@ -7035,7 +7035,9 @@
         "source_group",
         "source_name"
       ],
-      "candidate_handlers": [],
+      "candidate_handlers": [
+        "game.mystic_arrows"
+      ],
       "verification": "needs_scenario_review"
     },
     {
@@ -7066,7 +7068,9 @@
         "source_group",
         "source_name"
       ],
-      "candidate_handlers": [],
+      "candidate_handlers": [
+        "game.mystic_arrows"
+      ],
       "verification": "needs_scenario_review"
     },
     {
@@ -36554,7 +36558,10 @@
         "targets"
       ],
       "compiled_fields": [],
-      "candidate_handlers": [],
+      "candidate_handlers": [
+        "game.statuses.skip_stunned_action",
+        "game.views.execute: scene.turn"
+      ],
       "verification": "needs_scenario_review"
     },
     {

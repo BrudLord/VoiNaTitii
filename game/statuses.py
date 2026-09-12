@@ -11,6 +11,7 @@ CONSTRUCTIVE=[('Благословение','Поджог','Священное �
  ('Благословение','Влага','Очищение'),('Влага','Кислота','Взрыв'),('Влага','Шок','Оцепенение'),('Влага','Мороз','Заморозка'),
  ('Проклятье','Поджог','Некропламя'),('Проклятье','Кислота','Размякшая плоть'),('Проклятье','Шок','Проклятый разряд'),
  ('Проклятье','Мороз','Ледяная тьма'),('Мороз','Шок','Сверхпроводник'),('Поджог','Яд','Гипертермия')]
+STUN = ['Оглушение','Оцепенение','Заморозка']
 
 
 def status_name(effect):
@@ -53,8 +54,23 @@ def apply_status(target, incoming, choice=None):
     elif name:
         incoming['key']='status:'+name
         incoming['status']=name
-        if name=='Оглушение':
-            old=next((e for e in target.runtime.get('effects',[]) if status_name(e)==name),None)
-            if old:
-                incoming['value']+=old['value'];target.runtime['effects'].remove(old)
+    if status_name(incoming) in STUN:
+        old=next((e for e in target.runtime.get('effects',[]) if status_name(e)==status_name(incoming)),None)
+        if old:
+            incoming['value']+=old['value'];target.runtime['effects'].remove(old)
+        incoming['duration']='actions'
+        incoming.pop('remaining',None)
     put_effect(target,incoming)
+
+
+def skip_stunned_action(character):
+    """Consume one required skipped action; remaining strength survives turn boundaries."""
+    if not character.runtime.get('stun_pending',0):return False
+    for effect in list(character.runtime.get('effects',[])):
+        if status_name(effect) in STUN and effect.get('value',0)>0:
+            effect['value']-=1
+            if not effect['value']:character.runtime['effects'].remove(effect)
+            character.runtime['stun_pending']-=1
+            return True
+    character.runtime['stun_pending']=0
+    return False

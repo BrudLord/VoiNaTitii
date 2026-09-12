@@ -42,3 +42,7 @@
 #origin-hint:empty{display:none}
 
 .sheet-ability-columns .ability summary{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;align-items:baseline}.sheet-ability-columns .ability summary>.formula{font-size:.8rem;max-width:200px;overflow-wrap:anywhere}.sheet-ability-columns .ability summary>div:last-child:not(.formula){grid-column:1/-1}.sheet-ability-columns .ability summary>div:empty{display:none}.sheet-ability-columns .ability h3{font-size:.85rem}.sheet-ability-columns .ability .pill{font-size:.65rem}.sheet-ability-columns .ability{padding:6px 0}
+
+.mystic-arrows{border:1px solid var(--line);border-radius:8px;padding:10px;margin:14px 0;min-width:0}.mystic-arrows legend{font-size:.9rem;color:var(--accent)}.mystic-arrow-options{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}.mystic-arrow-options label{display:flex;align-items:flex-start;gap:8px;padding:7px;background:var(--bg);border-radius:6px;color:var(--ink);cursor:pointer}.mystic-arrow-options small{display:block;font-size:.73rem;margin-top:3px}.mystic-arrow-options input{margin-top:2px}.mystic-arrow-options label:has(input:checked){outline:1px solid var(--accent)}.mystic-arrow-options label:has(input:disabled){opacity:.5}@media(max-width:620px){.mystic-arrow-options{grid-template-columns:1fr}.mystic-arrow-options label{min-height:44px}}
+
+.attack-preview{display:flex;flex-wrap:wrap;gap:8px 18px;border-block:1px solid var(--line);padding:10px 0;margin:10px 0;font-size:.85rem}.attack-preview strong{color:var(--accent)}

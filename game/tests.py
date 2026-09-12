@@ -1150,3 +1150,149 @@ class GameTests(TestCase):
         row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.id)
         self.assertEqual(row['reflex_reason'],'');self.assertEqual(row['reason'],'Ход другого персонажа')
         reflex.archived=True;reflex.save();self.post(self.alice,p,400)
+
+
+    def mystic_setup(self,double=False):
+        passive=Entry.objects.create(kind='ability',name='Мистические стрелы',data={'category':'passive'})
+        self.a.abilities.add(passive)
+        if double:self.a.abilities.add(Entry.objects.create(kind='ability',name='Двойной заряд',data={'category':'passive'}))
+        bow=Item.objects.create(character=self.a,name='Лук',equipped=True,data={'item_type':'weapon','dice':'1к6','families':['Луки'],'keywords':['Дальнобойный 10']})
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор'})
+        scene=self.start()
+        payload={'op':'ability.use','character':self.a.id,'ability':attack.id,'targets':[self.b.id],
+                 'mystic_arrows':['frost'],'roll_result':'Попадание 15, урон 4','outcome':'hit'}
+        return scene,payload,bow,passive
+
+    def test_mystic_arrow_waits_for_choice_and_physical_roll(self):
+        scene,p,bow,passive=self.mystic_setup()
+        for extra in [{'mystic_arrows':[]},{'mystic_arrows':['unknown']},{'mystic_arrows':['frost','bind']},
+                      {'mystic_arrows':['frost','frost']},{'mystic_arrows':'frost'},{'roll_result':''},
+                      {'targets':[self.a.id,self.b.id]}]:
+            self.post(self.alice,{**p,**extra},400)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertEqual(self.a.runtime['mystic_arrows'],0)
+        self.assertEqual(self.b.runtime['effects'],[])
+        self.post(self.bob,p,403)
+        bow.data['families']=['Арбалеты'];bow.save();self.post(self.alice,p,400)
+        bow.data['families']=['Луки'];bow.save();passive.archived=True;passive.save();self.post(self.alice,p,400)
+        self.post(self.alice,{**p,'mystic_arrows':[]})
+
+    def test_mystic_arrow_exhaustion_miss_and_undo(self):
+        from .views import serialize_char
+        scene,p,_,_=self.mystic_setup()
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(computed(self.b)['speed'],3);self.assertEqual(self.b.runtime['hp'],10)
+        self.assertEqual(self.a.runtime['mystic_arrows'],1);self.assertEqual(computed(self.a)['hit'],0)
+        self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.post(self.alice,{**p,'mystic_arrows':['bind'],'outcome':'miss'})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['mystic_arrows'],2);self.assertEqual(computed(self.a)['hit'],-1)
+        self.assertEqual(computed(self.b)['speed'],3)
+        self.assertNotIn('Обездвижен',[e['name'] for e in self.b.runtime['effects']])
+        self.assertFalse(Event.objects.filter(actor=self.alice).latest('id').inputs['mystic_arrows']['hit'])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['mystic_arrows'],1);self.assertEqual(computed(self.a)['hit'],0)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertEqual(computed(self.a)['hit'],-1)
+        self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.post(self.alice,{**p,'targets':[],'mystic_arrows':['shift']});self.a.refresh_from_db()
+        self.assertEqual(computed(self.a)['hit'],-2)
+        rows=serialize_char(self.a,self.alice)['abilities']
+        self.assertEqual(next(a for a in rows if a['id']==self.bless.id)['hit_bonus'],-2)
+        self.assertTrue(Event.objects.filter(actor=self.alice).latest('id').inputs['mystic_arrows']['external_target'])
+
+    def test_double_arrow_target_durations_and_end_battle(self):
+        scene,p,_,_=self.mystic_setup(double=True)
+        self.post(self.alice,{**p,'mystic_arrows':['frost','bind']})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['mystic_arrows'],1);self.assertEqual(computed(self.a)['hit'],0)
+        self.assertEqual(computed(self.b)['speed'],0)
+        self.turn(scene,self.alice);self.turn(scene,self.bob);self.b.refresh_from_db()
+        self.assertEqual(computed(self.b)['speed'],3)
+        self.assertEqual(self.b.runtime['effects'][0]['remaining'],2)
+        for _ in range(2):self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],6)
+        self.post(self.alice,{**p,'mystic_arrows':['stun','vulnerable']});self.b.refresh_from_db()
+        self.assertEqual({e['name']:e['value'] for e in self.b.runtime['effects']},{'Оглушение':2,'Уязвимость':1})
+        scene.refresh_from_db();self.post(self.gm,{'op':'scene.end','scene':scene.id,'version':scene.state})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['mystic_arrows'],0);self.assertEqual(computed(self.a)['hit'],0)
+        self.post(self.gm,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['mystic_arrows'],2);self.assertEqual(computed(self.a)['hit'],-1)
+        self.assertEqual(len(self.b.runtime['effects']),2)
+
+    def test_arrow_reaction_is_chosen_by_attacker_and_atomic(self):
+        scene,p,_,_=self.mystic_setup()
+        self.b.runtime['effects']=[{'key':'bless','status':'Благословение','name':'Благословение','value':2,'stat':'hit','duration':'turns','remaining':3}];self.b.save()
+        self.post(self.alice,p,400)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertEqual(self.a.runtime['mystic_arrows'],0)
+        self.assertEqual(self.b.runtime['effects'][0]['name'],'Благословение')
+        self.post(self.alice,{**p,'reactions':{str(self.b.id)+':arrow:frost':'bless'}})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['name'],'Чистые льды')
+        self.assertEqual(self.b.runtime['effects'][0]['value'],5)
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['effects'][0]['name'],'Благословение')
+
+    def test_shift_is_instant_and_respects_equipment(self):
+        scene,p,_,_=self.mystic_setup()
+        earth=self.charm('Малое зачарование земли')
+        Item.objects.create(character=self.b,name='Броня земли',equipped=True,data={'item_type':'armor','enchantments':[earth.id]})
+        self.post(self.alice,{**p,'mystic_arrows':['shift']});self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['effects'],[]);self.assertEqual(self.b.runtime['hp'],10)
+        event=Event.objects.filter(actor=self.alice).latest('id')
+        self.assertEqual(event.inputs['mystic_arrows']['movements'],[{'target':self.b.name,'cells':4}])
+
+
+    def test_stun_strength_is_spent_by_actions_and_carries_to_next_turn(self):
+        from .statuses import apply_status
+        scene=self.start()
+        apply_status(self.b,{'name':'Оглушение','stat':'status','value':3,'duration':'turns','remaining':1})
+        apply_status(self.b,{'name':'Оглушение','stat':'status','value':2,'duration':'turns','remaining':1})
+        self.b.save();self.turn(scene,self.alice);self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['stun_pending'],3)
+        self.assertEqual(self.b.runtime['effects'][0]['duration'],'actions')
+        self.assertEqual(self.b.runtime['effects'][0]['value'],5)
+        self.post(self.bob,{'op':'action.spend','character':self.b.id,'action':'move'})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],4)
+        self.turn(scene,self.bob);self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['effects'][0]['value'],2)
+        self.assertEqual(Event.objects.filter(actor=self.bob).latest('id').inputs['stun_skipped'],2)
+        self.post(self.bob,{'op':'undo'});self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['effects'][0]['value'],4)
+        self.assertEqual(self.b.runtime['stun_pending'],2)
+        self.post(self.bob,{'op':'redo'});self.turn(scene,self.alice)
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['stun_pending'],2)
+        self.turn(scene,self.bob);self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['effects'],[])
+        self.assertEqual(self.b.runtime['stun_pending'],0)
+
+
+    def test_stunning_arrow_includes_boulder_damage_only_on_hit(self):
+        from .views import serialize_char
+        scene,p,_,_=self.mystic_setup()
+        boulder=Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive'})
+        self.a.abilities.add(boulder)
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==p['ability'])
+        stun=next(o for o in row['mystic_arrows']['options'] if o['id']=='stun')
+        self.assertEqual(stun['damage_contribution']['value'],2)
+        self.post(self.alice,{**p,'mystic_arrows':['stun']})
+        event=Event.objects.filter(actor=self.alice).latest('id')
+        self.assertEqual(event.inputs['damage_contributions'],[{'key':'boulder_stun','value':2,'type':'Земля','name':'Глыба · Оглушение','once_per_turn':False}])
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'mystic_arrows':['stun'],'outcome':'miss'})
+        event=Event.objects.filter(actor=self.alice).latest('id')
+        self.assertFalse(event.inputs.get('damage_contributions'))
+        boulder.archived=True;boulder.save()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==p['ability'])
+        self.assertNotIn('damage_contribution',next(o for o in row['mystic_arrows']['options'] if o['id']=='stun'))
+
+
+    def test_repeated_freezing_reaction_adds_unspent_stun_strength(self):
+        from .statuses import apply_status
+        for _ in range(2):
+            apply_status(self.b,{'name':'Влага','status':'Влага','key':'status:Влага','stat':'status','value':1,'duration':'turns','remaining':3})
+            apply_status(self.b,{'name':'Мороз','status':'Мороз','stat':'speed','value':-2,'duration':'turns','remaining':3},'status:Влага')
+        self.assertEqual(len(self.b.runtime['effects']),1)
+        freeze=self.b.runtime['effects'][0]
+        self.assertEqual((freeze['status'],freeze['value'],freeze['duration']),('Заморозка',6,'actions'))
