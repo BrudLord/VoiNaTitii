@@ -27,6 +27,8 @@ def computed(c):
     from .weaponry import upgrades
     weapon_upgrades=upgrades(selected) if selected else []
     effects = list(c.runtime.get('effects', []))
+    if selected and selected.data.get('accuracy_oil'):
+        effects.append({'stat':'hit','value':1,'ability_scope':'weapon','name':'Масло точности'})
     effects.extend({'stat':'hit','value':p['hit'],'ability_scope':'weapon'} for p in weapon_upgrades if p.get('hit'))
     effects.extend({'stat':'speed','value':p['speed']} for p in enchantments if p.get('speed'))
     effects.extend({**e,**({'ability_scope':'weapon' if i.data.get('dice') else 'focus'} if (i.data.get('dice') or i.data.get('item_type')=='focus') and e.get('stat') in ['hit','damage'] else {})} for i in equipped for e in i.data.get('effects',[])

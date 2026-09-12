@@ -121,6 +121,7 @@ def serialize_char(c, user):
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
             'memberships': list(c.memberships.values('campaign_id', 'squad_id')),
             'items': list(c.items.filter(archived=False).values('id', 'revision', 'entry_id', 'name', 'quantity', 'equipped', 'slot', 'data')),
+            'main_action_reason':availability(c,Entry(data={'action':'main'}),scene,calc) if scene else '',
             'scene_id': scene.id if scene else None}
 
 
@@ -356,6 +357,9 @@ def execute(user, p):
             entry.data = data
         entry.save()
         return {'id': entry.id}
+    elif op == 'alchemy.oil':
+        from .alchemy import apply_oil
+        return apply_oil(user,p)
     elif op == 'craft.apply':
         return crafting.apply(user,p)
     elif op in ['knowledge.save','knowledge.archive']:
@@ -424,6 +428,8 @@ def execute(user, p):
         if op == 'scene.end':
             scene.state['active'] = False
             for c in chars.values():
+                from .alchemy import end_battle
+                end_battle(change,c)
                 c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
                 c.runtime['hp'] = computed(c)['max_hp']
         else:

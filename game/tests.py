@@ -888,3 +888,55 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'attack.mode','character':self.a.id,'mode':'ranged'});self.a.refresh_from_db()
         row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.id)
         self.assertEqual(row['hit_bonus'],3);self.assertEqual(row['formula'],'1к4');self.assertEqual(row['data']['range'],'Дальнобойный 5')
+
+    def test_accuracy_oil_splits_weapon_and_tracks_selected_equipment(self):
+        from .enchantments import ability_bonus
+        oil=Item.objects.create(character=self.a,name='Масло точности',quantity=2,data={'item_type':'consumable'})
+        weapon=Item.objects.create(character=self.a,name='Кинжал',quantity=2,equipped=True,data={'item_type':'weapon','dice':'1к4'})
+        other=Item.objects.create(character=self.a,name='Другой клинок',equipped=True,data={'item_type':'weapon','dice':'1к6'})
+        p={'op':'alchemy.oil','character':self.a.id,'id':oil.id,'revision':1,'weapon':weapon.id,'weapon_revision':1}
+        result=Item.objects.get(pk=self.post(self.alice,p)['id'])
+        self.a.refresh_from_db();weapon.refresh_from_db();oil.refresh_from_db()
+        self.assertEqual((weapon.quantity,result.quantity,oil.quantity),(1,1,1))
+        self.assertFalse(weapon.equipped);self.assertTrue(result.equipped)
+        self.assertEqual(computed(self.a)['weapon_id'],result.id)
+        attack=Entry.objects.create(kind='ability',name='Атака',data={'weapon':True})
+        spell=Entry.objects.create(kind='ability',name='Магия',data={'keywords':['Магическое']})
+        self.assertEqual(ability_bonus(computed(self.a),attack,'hit'),1)
+        self.assertEqual(ability_bonus(computed(self.a),spell,'hit'),0)
+        self.post(self.alice,{'op':'weapon.select','character':self.a.id,'item':other.id})
+        self.a.refresh_from_db();self.assertEqual(ability_bonus(computed(self.a),attack,'hit'),0)
+        self.post(self.alice,{'op':'undo'});self.post(self.alice,{'op':'undo'})
+        oil.refresh_from_db();weapon.refresh_from_db();result.refresh_from_db()
+        self.assertEqual(oil.quantity,2);self.assertEqual(weapon.quantity,2)
+        self.assertTrue(weapon.equipped);self.assertTrue(result.archived)
+        self.post(self.alice,{'op':'redo'});result.refresh_from_db();self.assertTrue(result.data['accuracy_oil'])
+
+    def test_accuracy_oil_expires_after_one_battle_and_end_can_be_undone(self):
+        oil=Item.objects.create(character=self.a,name='Масло точности',quantity=2,data={'item_type':'consumable'})
+        weapon=Item.objects.create(character=self.a,name='Клинок',equipped=True,data={'item_type':'weapon','dice':'1к6'})
+        scene=self.start()
+        p={'op':'alchemy.oil','character':self.a.id,'id':oil.id,'revision':1,'weapon':weapon.id,'weapon_revision':1}
+        self.post(self.alice,p);self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,{'op':'redo'})
+        self.post(self.gm,{'op':'scene.end','scene':scene.id,'version':scene.state})
+        weapon.refresh_from_db();self.assertNotIn('accuracy_oil',weapon.data)
+        self.post(self.gm,{'op':'undo'});weapon.refresh_from_db();self.assertTrue(weapon.data['accuracy_oil'])
+        self.post(self.gm,{'op':'redo'});weapon.refresh_from_db();self.assertNotIn('accuracy_oil',weapon.data)
+        scene=self.start();self.a.refresh_from_db();self.assertEqual(computed(self.a)['hit'],0)
+
+    def test_accuracy_oil_rejects_stale_repeat_foreign_and_out_of_turn_use(self):
+        oil=Item.objects.create(character=self.a,name='Масло точности',quantity=2,data={'item_type':'consumable'})
+        weapon=Item.objects.create(character=self.a,name='Клинок',data={'item_type':'weapon','dice':'1к6'})
+        p={'op':'alchemy.oil','character':self.a.id,'id':oil.id,'revision':1,'weapon':weapon.id,'weapon_revision':1}
+        self.post(self.bob,p,403);self.post(self.alice,{**p,'revision':0},400)
+        self.post(self.alice,p);weapon.refresh_from_db();oil.refresh_from_db()
+        self.post(self.alice,{**p,'revision':oil.revision,'weapon_revision':weapon.revision},400)
+        self.post(self.alice,{'op':'undo'});oil.refresh_from_db();weapon.refresh_from_db()
+        scene=self.start();self.turn(scene,self.alice)
+        from .views import serialize_char
+        self.a.refresh_from_db()
+        self.assertEqual(serialize_char(self.a,self.alice)['main_action_reason'],'Ход другого персонажа')
+        self.post(self.alice,{**p,'revision':oil.revision,'weapon_revision':weapon.revision},400)
+        oil.refresh_from_db();self.assertEqual(oil.quantity,2)

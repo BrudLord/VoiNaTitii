@@ -51,3 +51,14 @@ document.addEventListener('change',e=>{
 });
 
 function upgradeFields(data){return `<details ${data.upgrades?.length?'open':''}><summary>Улучшения оружейника</summary><div class="enchantment-choices">${(S.rules.crafting||[]).filter(r=>r.kind==='upgrade').map(r=>`<label><input type="checkbox" name="upgrades" value="${r.id}" ${data.upgrades?.includes(r.id)?'checked':''}><span><strong>${esc(r.name)}</strong><small>${esc(r.families.join(', '))}</small><small>${esc(entry(r.id)?.description)}</small></span></label>`).join('')}</div></details>`}
+
+function oilForm(item){
+ const c=byId(S.characters,item.character),weapons=c.items.filter(i=>i.quantity>0&&i.data.item_type==='weapon'&&!i.data.accuracy_oil);
+ modal('Масло точности',`<p>+1 к попаданию выбранным оружием на один бой.</p>${c.scene_id?'<p>Основное действие</p>':''}${selector('oil_weapon','Оружие · один экземпляр',weapons.map(i=>({id:i.id,name:craftLabel(i,i.equipped?'В руках':'С собой')})),null)}`,async()=>{
+  const weapon=weapons.find(i=>i.id===num(formObject().oil_weapon));if(!weapon)throw Error('Выберите оружие');
+  await api({op:'alchemy.oil',character:c.id,id:item.id,revision:item.revision,weapon:weapon.id,weapon_revision:weapon.revision});
+ },'Нанести масло');
+ const update=()=>el('dialog-submit').disabled=!num(formObject().oil_weapon);
+ dialogBody.querySelector('[name=oil_weapon]').addEventListener('change',update);update();
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-do="alchemy.oil"]');if(b)oilForm(stockItem(b.dataset.id))});
