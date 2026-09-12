@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows, charged_arrows, targeting, weaving, stances
+from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows, charged_arrows, targeting, weaving, stances, periodic
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token, reflex_eligible
 from .alignment import schema as alignment_schema, validate_alignment
@@ -128,7 +128,7 @@ def serialize_char(c, user):
                           'rolls_required': a.name not in [charged_arrows.NAME,weaving.NAME] and (rolls_required(a) or bool(a.data.get('weapon')))})
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
-            'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'abilities': abilities,
+            'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'periodic_damage':periodic.damage_events(c), 'abilities': abilities,
             'knowledge':knowledge.visible(c,user),
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
@@ -459,6 +459,7 @@ def execute(user, p):
             if conditions:
                 change.inputs['skipped_conditions']=[{'name':status_name(e),'source':e.get('source',''),
                     'speed':computed(c)['speed'] if status_name(e)=='Страх' else 0} for e in conditions]
+            change.inputs['periodic_damage']=periodic.damage_events(c,'end')
             skipped=0
             for action_kind in ACTIONS:
                 while c.runtime.get('actions',{}).get(action_kind,0)>0 and skip_stunned_action(c):
@@ -486,6 +487,7 @@ def execute(user, p):
                 for c in chars.values():
                     c.runtime.setdefault('actions', {})['reaction'] = computed(c)['reactions']
             next_char = chars[order[scene.state['turn']]]
+            change.inputs['periodic_damage'].extend(periodic.damage_events(next_char,'start'))
             next_char.runtime.setdefault('actions', {}).update(ACTIONS)
             next_char.runtime['stun_pending']=0
             for e in next_char.runtime.get('effects',[]):

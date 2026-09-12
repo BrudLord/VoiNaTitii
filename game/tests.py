@@ -2296,3 +2296,46 @@ class GameTests(TestCase):
         transformed=effective(self.a,ability)
         self.assertEqual([e['value'] for e in transformed.data['effects']],[3,3,2,2,2])
         self.assertEqual([e['value'] for e in effective(self.a,transformed).data['effects']],[3,3,2,2,2])
+
+    def test_necroflame_records_double_strength_as_start_turn_damage(self):
+        from .statuses import apply_status
+        from .periodic import damage_events
+        self.b.runtime['effects']=[{'key':'curse','name':'Проклятье','stat':'hit','value':-2,'duration':'turns','remaining':3}]
+        apply_status(self.b,{'name':'Поджог','stat':'status','value':3,'duration':'turns','remaining':3},'curse')
+        effect=self.b.runtime['effects'][0]
+        self.assertEqual((effect['name'],effect['value']),('Некропламя',5))
+        self.assertIn('10 продолжительного урона',effect['note'])
+        self.assertEqual(damage_events(self.b,'start')[0]['damage'],10)
+        self.assertEqual(damage_events(self.b,'end'),[])
+
+    def test_periodic_end_tick_occurs_before_expiry_and_next_start_is_logged(self):
+        scene=self.start();self.a.refresh_from_db();self.b.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'poison','name':'Яд','stat':'status','value':2,'duration':'turns','remaining':1}]
+        self.b.runtime['effects']=[{'key':'burn','name':'Поджог','stat':'status','value':3,'duration':'turns','remaining':1}]
+        self.a.save();self.b.save()
+        hp=(self.a.runtime['hp'],self.b.runtime['hp'])
+        self.turn(scene,self.alice)
+        rows=Event.objects.latest('id').inputs['periodic_damage']
+        self.assertEqual([(r['effect'],r['phase'],r['damage'],r['character']) for r in rows],[('Яд','end',2,self.a.pk),('Поджог','start',3,self.b.pk)])
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'],[])
+        self.assertEqual((self.a.runtime['hp'],self.b.runtime['hp']),hp)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'][0]['remaining'],1)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['effects'],[])
+
+    def test_periodic_area_reactions_show_scope_and_do_not_confuse_ability_names(self):
+        from .periodic import damage_events
+        self.a.runtime['effects']=[{'name':'Священное пламя','status':'Священное пламя','stat':'status','value':4},
+                                   {'name':'Вирус','status':'Вирус','stat':'status','value':2},
+                                   {'name':'Священное пламя','stat':'target_hit','value':1}]
+        rows=damage_events(self.a)
+        self.assertEqual([(r['effect'],r['area'],r['damage']) for r in rows],[('Священное пламя',1,4),('Вирус',1,2)])
+
+    def test_periodic_damage_preview_lists_phases_and_zero_damage_is_omitted(self):
+        from .views import serialize_char
+        self.a.runtime['effects']=[{'key':'blood','name':'Кровотечение','stat':'status','value':3},
+                                   {'key':'dot','name':'Продолжительный урон','stat':'status','value':4},
+                                   {'key':'burn','name':'Поджог','stat':'status','value':0}]
+        rows=serialize_char(self.a,self.alice)['periodic_damage']
+        self.assertEqual([(r['phase'],r['damage'],r['damage_type']) for r in rows],[('end',3,'Физический'),('start',4,'')])
