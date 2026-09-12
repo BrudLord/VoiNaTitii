@@ -115,3 +115,123 @@ def plan(ability, payload, participants, *, multiplier=1):
             raise ValueError('Количество выстрелов должно соответствовать пройденным клеткам')
     return {'profile': spec, 'attacks': steps, 'all_missed': all(row['outcome'] == 'miss' for row in steps),
             'successful_targets': list(dict.fromkeys(key for key, row in zip(keys, steps) if row['outcome'] != 'miss'))}
+
+
+# A step may describe an attack, but cannot impersonate another actor, change the
+# ability, reserve a second action, or recursively inject another sequence.
+STEP_FIELDS = {
+    'number', 'target', 'external_target', 'outcome', 'roll_result', 'reactions',
+    'reaction_rolls', 'spreads', 'external_bp', 'external_conductor', 'external_prone',
+    'mark_source_included', 'mystic_arrows', 'charged_arrows', 'charged_target',
+    'exhaustion_target', 'miss_damage', 'movement_before', 'movement_after',
+}
+
+
+def move_step(change, character, step, spec, spent, phase):
+    from .movement import resolve
+    from .rules import computed
+    movement = step.get('movement_' + phase)
+    if spec.get('one_per_step') and phase == 'before':
+        movement = movement or {'cells': 1, 'cell_cost': 1}
+        if not isinstance(movement, dict) or movement.get('cells') != 1:
+            raise ValueError('Перед каждым выстрелом залпа нужно пройти одну клетку')
+    if movement is None:
+        return spent
+    if not isinstance(movement, dict):
+        raise ValueError('Укажите путь шага')
+    calc = computed(character)
+    if spec.get('during_movement'):
+        limit = max(0, calc['speed'] - spent)
+    elif spec.get('step_after_attack') and phase == 'after':
+        limit = spec['step_after_attack']
+    elif spec.get('one_per_step') and phase == 'before':
+        limit = 1
+    else:
+        raise ValueError('Это умение не даёт шага в выбранный момент')
+    result, sources = resolve(character, {**movement, 'mode': 'step'}, change.scene, calc, step_limit=limit)
+    for source in sources:
+        change.depend(source)
+    step.setdefault('_movement_log', []).append({**result, 'phase': phase})
+    return spent + result['cells']
+
+
+def execute(user, payload, character, ability, scene, *, drawn=None, embedded=False):
+    """Execute a validated sequence inside the action endpoint's transaction.
+
+    Intermediate changes are persisted for the next attack's calculations but
+    generate no events. The encompassing Change owns the original snapshots.
+    """
+    from .views import use_ability
+    from .rules import Change
+    from .passives import turn_token
+    if payload.get('op') != 'ability.use' or not (ability.data.get('damage') or ability.data.get('weapon')):
+        raise ValueError('Последовательность должна состоять из атак')
+    ordered = plan(ability, payload, set(scene.state['order']))
+    for step in ordered['attacks']:
+        if set(step) - STEP_FIELDS:
+            raise ValueError('В атаке серии есть неподдерживаемые параметры')
+    change = drawn or Change(user, ability.display_name + ' · ' + character.name, scene)
+    change.label = ability.display_name + ' · ' + character.name
+    change.watch(character)
+    action = 'reaction' if payload.get('as_reaction') else ability.data.get('action', 'main')
+    if not embedded:
+        change.action(character, action)
+    if action != 'free' and not payload.get('use_ready'):
+        character.runtime['actions'][action] -= 1
+    change.inputs['attack_sequence'] = {'attacks': [], 'profile': ordered['profile']}
+    change.inputs['outcome'] = 'miss' if ordered['all_missed'] else 'hit'
+    if payload.get('support_minor'):
+        change.label += ' · Малым'
+        change.inputs['support_minor'] = True
+    if payload.get('as_reaction'):
+        change.label = 'Молниеносные рефлексы · ' + change.label
+        character.runtime.setdefault('once_per_turn', {})['lightning_reflexes'] = turn_token(scene)
+        change.inputs['as_reaction'] = True
+    # Charged Arrows belongs to this whole ability. Each attack can assign its
+    # own Ор slots; the preparation disappears once, after the final attack.
+    charged = copy.deepcopy(character.runtime.get('charged_arrows'))
+    change.finish(defer_record=True)
+    moved = 0
+    for index, step in enumerate(ordered['attacks']):
+        current = change.objects['character:' + str(character.pk)]
+        moved = move_step(change, current, step, ordered['profile'], moved, 'before')
+        args = {k: copy.deepcopy(v) for k, v in step.items() if k not in {'number', 'target', 'external_target', 'movement_before', 'movement_after', '_movement_log'}}
+        args.update(op='ability.use', character=character.pk, ability=ability.pk,
+                    targets=[] if step['target'] is None else [step['target']],
+                    support_minor=bool(payload.get('support_minor')))
+        try:
+            child = use_ability(user, args, embedded=embedded, sequence_step=True)
+        except ValueError as error:
+            raise ValueError(f'Атака {index + 1}: {error}') from error
+        if step['external_target']:
+            for row in child.inputs.get('attack_targets', []):
+                row['name'] = step['external_target']
+        change.absorb(child)
+        current = change.objects['character:' + str(character.pk)]
+        if charged and index + 1 < len(ordered['attacks']):
+            current.runtime['charged_arrows'] = copy.deepcopy(charged)
+        child.finish(defer_record=True)
+        moved = move_step(change, current, step, ordered['profile'], moved, 'after')
+        change.inputs['attack_sequence']['attacks'].append({
+            'number': index + 1, 'target': step['target'], 'external_target': step['external_target'],
+            'inputs': copy.deepcopy(child.inputs), 'movement': step.get('_movement_log', []),
+        })
+    current = change.objects['character:' + str(character.pk)]
+    # Keep the existing journal useful while preserving full per-step metadata
+    # for the sequence editor and detailed replay.
+    change.inputs['roll_result'] = ' · '.join(f"{step['number']}: {step['roll_result']}" for step in ordered['attacks'])
+    change.inputs['attack_targets'] = [
+        {**row, 'name': f"Атака {step['number']} · {row['name']}"}
+        for step in change.inputs['attack_sequence']['attacks']
+        for row in step['inputs'].get('attack_targets', [])
+    ]
+    if not (ordered['all_missed'] and ability.data.get('reliable')):
+        used = current.runtime.setdefault('used', {})
+        used[str(ability.pk)] = used.get(str(ability.pk), 0) + 1
+    if payload.get('use_ready'):
+        from .readied import resolve
+        resolve(change, current, scene, payload, ability.data.get('action', 'main'))
+    if embedded:
+        return change
+    change.finish()
+    return change

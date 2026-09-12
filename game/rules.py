@@ -204,7 +204,7 @@ def current_scene(c):
     return None
 
 
-def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=False):
+def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=False, continuing=False):
     calc = calc or computed(c)
     d = ability.data
     category = d.get('category', 'active')
@@ -231,26 +231,26 @@ def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=F
     if statuses.intersection({'Сон','Страх'}):
         return 'Персонаж пропускает ход: '+', '.join(statuses.intersection({'Сон','Страх'}))
     action = d.get('action', 'main')
-    if as_reaction:
+    if as_reaction and not continuing:
         from .passives import reflex_reason
         blocked=reflex_reason(c,ability,scene)
         if blocked:return blocked
         if readied:return 'Отложенное действие нельзя одновременно применять через рефлексы'
         action='reaction'
-    if readied:
+    if readied and not continuing:
         from .readied import reason
         blocked=reason(c,scene,action,readied if isinstance(readied,str) else None)
         if blocked:return blocked
     if c.runtime.get('stun_pending',0) and scene.state['order'][scene.state['turn']]==c.id:
         return 'Оглушение: выберите пропускаемые действия'
-    if action == 'reaction' and scene.state['order'][scene.state['turn']] == c.id:
+    if not continuing and action == 'reaction' and scene.state['order'][scene.state['turn']] == c.id:
         return 'Реакция доступна на чужом ходу'
-    if not readied and action not in ['reaction','free'] and scene.state['order'][scene.state['turn']] != c.id:
+    if not continuing and not readied and action not in ['reaction','free'] and scene.state['order'][scene.state['turn']] != c.id:
         return 'Ход другого персонажа'
-    if not readied and action != 'free' and c.runtime.get('actions', {}).get(action, 0) < 1:
+    if not continuing and not readied and action != 'free' and c.runtime.get('actions', {}).get(action, 0) < 1:
         return 'Нет нужного действия'
     count = limit(c.level, int(d.get('circle', 0)))
-    if count is not None and c.runtime.get('used', {}).get(str(ability.id), 0) >= count:
+    if not continuing and count is not None and c.runtime.get('used', {}).get(str(ability.id), 0) >= count:
         return 'Применения закончились'
     if d.get('weapon') and not calc['weapon'] and not d.get('system') and ability.name!='Стандартная атака':
         return 'Нужно оружие в руках'

@@ -9,6 +9,15 @@ def apply(user,p):
     c=owned(user,p['character']);scene=current_scene(c);calc=computed(c)
     reason=availability(c,Entry(data={'action':'move'}),scene,calc)
     if reason:raise ValueError(reason)
+    movement,sources=resolve(c,p,scene,calc)
+    change=Change(user,('Шаг' if p['mode']=='step' else 'Движение')+' · '+c.name,scene,inputs={'movement':movement})
+    for source in sources:change.depend(source)
+    change.watch(c);change.action(c,'move');c.runtime['actions']['move']-=1
+    change.finish()
+
+
+def resolve(c,p,scene,calc=None,*,step_limit=None):
+    calc=calc or computed(c)
     if any(status_name(e)=='Обездвижен' for e in c.runtime.get('effects',[])):
         raise ValueError('Обездвиженный персонаж не может двигаться или делать шаг')
     mode=p.get('mode');cells=p.get('cells');cost=p.get('cell_cost')
@@ -31,16 +40,13 @@ def apply(user,p):
     zone_cells=sum(s['cells'] for s in segments)
     if zone_cells>cells:raise ValueError('Клеток в областях больше, чем всего клеток пути; пересечения считайте один раз')
     extra=sum(s['cells']*(s['cell_cost']-cost) for s in segments)
-    limit=calc['step'] if mode=='step' else max(0,(calc['speed']-extra)//cost)
+    limit=(calc['step'] if step_limit is None else step_limit) if mode=='step' else max(0,(calc['speed']-extra)//cost)
     if mode=='step' and any(s['cell_cost']>1 for s in segments):raise ValueError('Шаг невозможен через Чистые льды с повышенной стоимостью')
     if mode=='step' and cost!=1:raise ValueError('Шаг невозможен, если клетка стоит больше одной клетки движения')
     if cells>limit:raise ValueError(f'Доступно не более {limit} клеток')
-    change=Change(user,('Шаг' if mode=='step' else 'Движение')+' · '+c.name,scene,
-                  inputs={'movement':{'mode':mode,'cells':cells,'cell_cost':cost,'limit':limit,'provokes':mode!='step'}})
-    if segments:change.inputs['movement'].update(terrain=segments,total_cost=cells*cost+extra)
-    for source in sources.values():change.depend(source)
-    change.watch(c);change.action(c,'move');c.runtime['actions']['move']-=1
-    change.finish()
+    movement={'mode':mode,'cells':cells,'cell_cost':cost,'limit':limit,'provokes':mode!='step'}
+    if segments:movement.update(terrain=segments,total_cost=cells*cost+extra)
+    return movement,list(sources.values())
 
 
 def forced(c,cells):

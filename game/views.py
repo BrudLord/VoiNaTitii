@@ -715,6 +715,9 @@ def validate_entry(d):
     weaponry.validate_wide_swing(d)
     weaponry.validate_unarmed(d)
     stances.validate_sphere(d)
+    if 'attack_sequence' in d:
+        from .attack_sequences import validate_profile
+        validate_profile(d['attack_sequence'])
     for key in ['formula', 'dice', 'stat', 'source_name']:
         if key in d and not isinstance(d[key], str):
             raise ValueError('Параметр ' + key + ' должен быть строкой')
@@ -757,7 +760,7 @@ def item_action(user,p):
     return mutate(user,p)
 
 
-def use_ability(user, p, embedded=False):
+def use_ability(user, p, embedded=False, *, sequence_step=False):
     c = owned(user, p['character'])
     a = get_object_or_404(Entry, pk=p['ability'],kind='ability',archived=False)
     if not a.data.get('system') and not c.abilities.filter(pk=a.pk).exists():
@@ -779,6 +782,8 @@ def use_ability(user, p, embedded=False):
         a=variant
     if embedded:
         a.data=copy.deepcopy(a.data);a.data['action']='free'
+    if sequence_step:
+        a.data=copy.deepcopy(a.data);a.data['target']='single'
     d = a.data
     aura = p['op'] == 'aura.set'
     if p.get('as_reaction') and (aura or p.get('use_ready')):
@@ -786,9 +791,12 @@ def use_ability(user, p, embedded=False):
     if aura and not d.get('aura'):
         raise ValueError('Это не аура')
     if not aura:
-        reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False,as_reaction=bool(p.get('as_reaction')))
+        reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False,as_reaction=bool(p.get('as_reaction')),continuing=sequence_step)
         if reason:
             raise ValueError(reason)
+        if 'attacks' in p and not sequence_step:
+            from .attack_sequences import execute as execute_sequence
+            return execute_sequence(user,p,c,a,scene,drawn=drawn,embedded=embedded)
         needs_roll = a.name not in [charged_arrows.NAME,weaving.NAME] and (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
         if needs_roll and not str(p.get('roll_result', '')).strip():
             raise ValueError('Введите результат физического броска. Действие пока не применено.')
@@ -823,7 +831,7 @@ def use_ability(user, p, embedded=False):
     if defense:change.inputs['damage_reduction']=defense
     change.effect_targets=pool_targets
     change.watch(c)
-    if not aura and not embedded:change.action(c,'reaction' if p.get('as_reaction') else d.get('action','main'))
+    if not aura and not embedded and not sequence_step:change.action(c,'reaction' if p.get('as_reaction') else d.get('action','main'))
     if p.get('support_minor'):
         change.label+=' · Малым'
         change.inputs['support_minor']=True
@@ -849,7 +857,7 @@ def use_ability(user, p, embedded=False):
         for contribution in contributions:
             if contribution.get('once_per_turn'):
                 c.runtime.setdefault('once_per_turn',{})[contribution['key']]=turn_token(scene)
-    if not aura:
+    if not aura and not sequence_step:
         act = 'reaction' if p.get('as_reaction') else d.get('action', 'main')
         if p.get('as_reaction'):
             c.runtime.setdefault('once_per_turn',{})['lightning_reflexes']=turn_token(scene)
@@ -913,13 +921,13 @@ def use_ability(user, p, embedded=False):
         if weave['prepare']:c.runtime['mystic_weaving']={'ability':a.pk}
         else:c.runtime.pop('mystic_weaving',None)
         change.inputs['weaving']={'prepared':weave['prepare']}
-    if p.get('use_ready') and not aura:
+    if p.get('use_ready') and not aura and not sequence_step:
         from .readied import resolve
         resolve(change,c,scene,p,d.get('action','main'))
     if not aura:
         from . import thrown
         thrown.release(change,c,a)
-    if embedded:return change
+    if embedded or sequence_step:return change
     if weave and weave.get('child'):
         change.finish(defer_record=True)
         child=use_ability(user,weave['child'],embedded=True)

@@ -3709,3 +3709,105 @@ class GameTests(TestCase):
         self.assertNotIn('exhaustion_transfer',self.a.runtime)
         self.assertTrue(any(e.get('status')=='Истощение маны' for e in self.b.runtime['effects']))
         self.assertFalse(any(e.get('status')=='Истощение маны' for e in self.a.runtime['effects']))
+
+    def sequence_setup(self, **data):
+        a=Entry.objects.create(kind='ability',name='Серия для проверки',data={'circle':1,'action':'main','damage':True,'formula':'2к6',
+            'attack_sequence':{'count':2,'targets':'same'},**data})
+        self.a.abilities.add(a);self.start()
+        return a,{'op':'ability.use','character':self.a.pk,'ability':a.pk,'attacks':[
+            {'target':self.b.pk,'outcome':'hit','roll_result':'Попадание 17, урон 8'},
+            {'target':self.b.pk,'outcome':'critical','roll_result':'Крит, урон 14'}]}
+
+    def test_sequence_recalculates_later_hits_and_records_one_undoable_action(self):
+        a,p=self.sequence_setup(effects=[{'stat':'target_hit','value':2,'name':'Мишень','turns':3}])
+        before=Event.objects.count();self.post(self.alice,p)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        event=Event.objects.latest('id');rows=event.inputs['attack_sequence']['attacks']
+        self.assertEqual(Event.objects.count(),before+1)
+        self.assertEqual(rows[1]['inputs']['attack_targets'][0]['hit']-rows[0]['inputs']['attack_targets'][0]['hit'],2)
+        self.assertEqual(rows[1]['inputs']['attack_targets'][0]['damage'],'4к6')
+        self.assertEqual((self.a.runtime['actions']['main'],self.a.runtime['used'][str(a.pk)]),(0,1))
+        self.assertEqual((self.a.runtime['hp'],self.b.runtime['hp']),(10,10))
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertFalse(self.b.runtime['effects'])
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['used'][str(a.pk)],1);self.assertEqual(len(self.b.runtime['effects']),1)
+
+    def test_sequence_late_failure_rolls_back_effects_resources_and_receipt(self):
+        a,p=self.sequence_setup(effects=[{'stat':'target_hit','value':2,'name':'Мишень','turns':3}])
+        before=Event.objects.count();clock=Clock.objects.get(pk=1).revision
+        p['attacks'][1]['external_bp']='invalid'
+        # A forged operation must not become a nested mutation either.
+        p['attacks'][1]['op']='hp';self.post(self.alice,p,400);p['attacks'][1].pop('op')
+        p['attacks'][1]['target']=None;p['attacks'][1]['external_target']='Противник'
+        a.data['attack_sequence']['targets']='any';a.save()
+        self.post(self.alice,p,400);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(Event.objects.count(),before);self.assertEqual(Clock.objects.get(pk=1).revision,clock)
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertFalse(self.b.runtime['effects'])
+
+    def test_sequence_all_misses_preserve_reliable_usage_and_hyperthermia_is_once(self):
+        a,p=self.sequence_setup(reliable=True)
+        self.a.refresh_from_db();self.a.runtime['effects']=[{'key':'hot','status':'Гипертермия','stat':'status','value':3,'duration':'battle'}];self.a.save()
+        for row in p['attacks']:row['outcome']='miss'
+        self.post(self.alice,p);self.a.refresh_from_db()
+        event=Event.objects.latest('id')
+        self.assertEqual(self.a.runtime['used'].get(str(a.pk),0),0);self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.assertEqual(len(event.inputs['periodic_damage']),1);self.assertEqual(self.a.runtime['hp'],10)
+        self.assertTrue(all(not r['inputs'].get('periodic_damage') for r in event.inputs['attack_sequence']['attacks']))
+
+    def test_sequence_charged_arrows_apply_per_attack_and_preparation_is_consumed_once(self):
+        scene,prep,shot=self.charged_setup();a=Entry.objects.get(pk=shot['ability']);a.data['attack_sequence']={'count':2,'targets':'same'};a.save()
+        self.post(self.alice,prep)
+        p={'op':'ability.use','character':self.a.pk,'ability':a.pk,'attacks':[
+            {'target':self.b.pk,'outcome':'miss','roll_result':'Промах 3','charged_arrows':['stun'],'charged_target':self.b.pk},
+            {'target':self.b.pk,'outcome':'hit','roll_result':'Попадание 18','charged_arrows':['stun'],'charged_target':self.b.pk}]}
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        rows=Event.objects.latest('id').inputs['attack_sequence']['attacks']
+        self.assertFalse(self.a.runtime.get('charged_arrows'));self.assertEqual(self.a.runtime['used'][str(a.pk)],1)
+        self.assertFalse(rows[0]['inputs']['charged_arrows']['hit']);self.assertTrue(rows[1]['inputs']['charged_arrows']['hit'])
+        self.assertEqual(len([e for e in self.b.runtime['effects'] if e.get('status')=='Оглушение']),1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertTrue(self.a.runtime.get('charged_arrows'));self.assertFalse(self.b.runtime['effects'])
+
+    def test_sequence_movement_uses_ability_step_without_spending_move_action(self):
+        a,p=self.sequence_setup(attack_sequence={'count':2,'targets':'any','during_movement':True})
+        p['attacks'][0]['movement_before']={'cells':2,'cell_cost':1}
+        p['attacks'][1]['movement_after']={'cells':3,'cell_cost':1}
+        self.post(self.alice,p);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['move'],1)
+        rows=Event.objects.latest('id').inputs['attack_sequence']['attacks']
+        self.assertEqual([r['movement'][0]['cells'] for r in rows],[2,3])
+        self.post(self.alice,{'op':'undo'})
+        p['attacks'][1]['movement_after']['cells']=5;self.post(self.alice,p,400)
+        p['attacks'][1]['movement_after']['cells']=3
+        self.a.refresh_from_db();self.a.runtime['effects']=[{'key':'bound','status':'Обездвижен','stat':'status','value':1,'duration':'battle'}];self.a.save()
+        self.post(self.alice,p,400)
+
+    def test_sequence_rechecks_reload_before_every_attack(self):
+        a,p=self.sequence_setup(weapon=True,formula='1Ор')
+        item=Item.objects.create(character=self.a,equipped=True,name='Арбалет',data={'item_type':'weapon','dice':'1к6','no_proficiency':True,'keywords':['Перезарядка малым']})
+        count=Event.objects.count();self.post(self.alice,p,400);item.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(item.data.get('needs_reload'));self.assertEqual(self.a.runtime['actions']['main'],1);self.assertEqual(Event.objects.count(),count)
+
+    def test_sequence_boulder_and_transfer_wait_for_first_hit_then_do_not_repeat(self):
+        a,p=self.sequence_setup(keywords=['Ближний'],attack_sequence={'count':3,'targets':'same'})
+        boulder=Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive','stat':'cha'});self.a.abilities.add(boulder)
+        self.a.refresh_from_db();self.a.runtime['exhaustion_transfer']={'strength':2,'ability':999};self.a.save()
+        p['attacks'][0]['outcome']='miss';p['attacks'].append(dict(p['attacks'][1],outcome='hit'))
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        rows=Event.objects.latest('id').inputs['attack_sequence']['attacks']
+        self.assertFalse(rows[0]['inputs'].get('exhaustion_transfer'))
+        self.assertEqual(rows[1]['inputs']['exhaustion_transfer']['strength'],2)
+        self.assertFalse(rows[2]['inputs'].get('exhaustion_transfer'))
+        self.assertIn('[Земля]',rows[1]['inputs']['attack_targets'][0]['damage'])
+        self.assertNotIn('[Земля]',rows[2]['inputs']['attack_targets'][0]['damage'])
+        self.assertFalse(self.a.runtime.get('exhaustion_transfer'))
+        self.assertEqual(next(e['value'] for e in self.b.runtime['effects'] if e.get('status')=='Истощение маны'),-2)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['exhaustion_transfer']['strength'],2);self.assertFalse(self.b.runtime['effects'])
+
+    def test_sequence_profiles_are_validated_and_preserved_when_renamed(self):
+        a=Entry.objects.create(kind='ability',name='Осколки тьмы',data={'damage':True,'formula':'1к6'})
+        self.post(self.gm,{'op':'entry.save','id':a.pk,'kind':'ability','name':'Мои осколки','description':'Правка мастера','data':{'damage':True,'formula':'1к8'}})
+        a.refresh_from_db();self.assertEqual(a.data['attack_sequence'],{'count':2,'targets':'any'})
+        self.post(self.gm,{'op':'entry.save','id':a.pk,'kind':'ability','name':a.name,'data':{'attack_sequence':{'count':True,'targets':'same'}}},400)
