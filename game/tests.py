@@ -2721,3 +2721,25 @@ class GameTests(TestCase):
         self.post(self.gm,{'op':'effect.apply','character':self.b.pk,'name':'Кислота','value':2,'reaction':'shock'})
         self.b.refresh_from_db();self.assertEqual(resolve(self.a,a,computed(self.a),[self.b],{})[0]['target_bonus'],0)
         self.post(self.gm,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(resolve(self.a,a,computed(self.a),[self.b],{})[0]['target_bonus'],3)
+
+    def test_first_kill_trigger_requires_an_active_healing_enchantment(self):
+        self.start();count=Event.objects.count()
+        self.post(self.alice,{'op':'enchantment.kill','character':self.a.pk},400)
+        self.a.refresh_from_db();self.assertFalse(self.a.runtime.get('enchantment_uses',{}).get('first_kill'))
+        self.assertEqual(Event.objects.count(),count)
+
+    def test_stance_controls_disable_switch_and_repeated_water_until_turn_changes(self):
+        from .views import serialize_char
+        from .passives import turn_token
+        support=Entry.objects.create(kind='ability',name='Стихийная поддержка',data={'category':'active'})
+        self.a.abilities.add(support);scene=self.start();self.a.refresh_from_db()
+        self.a.runtime['elemental_support']={'mode':'Вода','ability':support.pk}
+        self.a.runtime['actions']['minor']=0
+        self.a.runtime['once_per_turn']={'support_water':turn_token(scene)};self.a.save()
+        controls=serialize_char(self.a,self.alice)['stance_controls']
+        self.assertEqual(controls['switch_reason'],'Нет нужного действия')
+        self.assertEqual(controls['water_reason'],'Уже использовано в этом ходу')
+        self.turn(scene,self.alice);self.a.refresh_from_db()
+        controls=serialize_char(self.a,self.alice)['stance_controls']
+        self.assertEqual(controls['water_reason'],'')
+        self.assertEqual(controls['switch_reason'],'Ход другого персонажа')

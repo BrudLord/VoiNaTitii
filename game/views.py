@@ -130,7 +130,7 @@ def serialize_char(c, user):
                           'rolls_required': a.name not in [charged_arrows.NAME,weaving.NAME] and (rolls_required(a) or bool(a.data.get('weapon')))})
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
-            'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'periodic_damage':periodic.damage_events(c),'disarm':disarm_profile(c,calc,scene), 'abilities': abilities,
+            'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'periodic_damage':periodic.damage_events(c),'disarm':disarm_profile(c,calc,scene),'stance_controls':stances.controls(c,scene,calc), 'abilities': abilities,
             'knowledge':knowledge.visible(c,user),
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
@@ -581,10 +581,11 @@ def execute(user, p):
         if not scene: raise ValueError('Персонаж вне боя')
         if c.runtime.get('enchantment_uses',{}).get('first_kill'):
             raise ValueError('Первое убийство уже отмечено в этом бою')
-        change=Change(user,'Первый поверженный противник · '+c.name,scene)
-        change.watch(c)
         calc=computed(c)
         heal=max((e.get('first_kill_heal',0) for e in calc['enchantments']),default=0)
+        if not heal:raise ValueError('Нет зачарования с лечением за первого поверженного противника')
+        change=Change(user,'Первый поверженный противник · '+c.name,scene)
+        change.watch(c)
         c.runtime.setdefault('enchantment_uses',{})['first_kill']=True
         c.runtime['hp']=min(calc['max_hp'],c.runtime.get('hp',0)+heal)
         change.inputs['fixed_heal']=heal

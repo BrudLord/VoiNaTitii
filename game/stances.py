@@ -97,3 +97,14 @@ def minor_attack(c,a):
         return None
     result=copy.copy(a);result.data=copy.deepcopy(d);result.data['action']='minor'
     return result
+
+
+def controls(c,scene,calc):
+    from .rules import availability
+    from .passives import turn_token
+    if not calc.get('support'):return None
+    switch=availability(c,SimpleNamespace(data={'action':'minor'}),scene,calc)
+    water=availability(c,SimpleNamespace(data={'action':'free'}),scene,calc)
+    if scene and c.runtime.get('once_per_turn',{}).get('support_water')==turn_token(scene):
+        water='Уже использовано в этом ходу'
+    return {'switch_reason':switch,'water_reason':water}
