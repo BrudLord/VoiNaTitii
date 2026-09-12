@@ -689,7 +689,7 @@ def use_ability(user, p):
     ids = list(dict.fromkeys(int(i) for i in p.get('targets', [])))
     if any(i not in scene.state['order'] for i in ids):
         raise ValueError('Выберите участников текущего боя')
-    if d.get('effects') and not ids and not aura:
+    if d.get('effects') and not ids and not aura and not (d.get('damage') or d.get('weapon')):
         raise ValueError('Выберите цель')
     if d.get('target') == 'single' and len(ids) > 1:
         raise ValueError('Выберите одну цель')
@@ -700,6 +700,8 @@ def use_ability(user, p):
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
+    if not ids and not aura and p.get('outcome')!='miss' and d.get('effects'):
+        change.inputs['external_effects']=[e for e in d['effects'] if not e.get('manual')]
     for item in c.items.filter(equipped=True,archived=False):change.depend(item)
     if pool:
         change.inputs['roll_pool']=pool

@@ -1645,3 +1645,19 @@ class GameTests(TestCase):
         self.assertEqual(formula(self.a,ability,True),'2к6+6')
         self.a.stats['cha']=8
         self.assertEqual(formula(self.a,ability),'1к6-2')
+
+    def test_imported_attack_can_target_external_enemy_and_logs_effects_without_touching_allies(self):
+        desc,data,source=self.book_row('Отравленный дротик')
+        ability=Entry.objects.create(kind='ability',name='Отравленный дротик',description=desc,data=data)
+        self.a.abilities.add(ability);self.a.level=8;self.a.save();self.start()
+        payload={'op':'ability.use','character':self.a.id,'ability':ability.id,'targets':[],'roll_result':'Попадание 15, урон 4'}
+        self.post(self.alice,payload)
+        event=Event.objects.latest('id');self.assertEqual(event.inputs['external_effects'],data['effects'])
+        for c in [self.a,self.b]:c.refresh_from_db();self.assertEqual(c.runtime['effects'],[]);self.assertEqual(c.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**payload,'outcome':'miss'})
+        self.assertNotIn('external_effects',Event.objects.latest('id').inputs)
+        self.post(self.alice,{'op':'undo'})
+        heal=Entry.objects.create(kind='ability',name='Лечение',data={'effects':[{'stat':'hp','value':5}]})
+        self.a.abilities.add(heal)
+        self.post(self.alice,{**payload,'ability':heal.id},400)
