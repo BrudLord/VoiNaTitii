@@ -4,6 +4,8 @@ import io
 import json
 import uuid
 from .models import JournalEntry
+from .passives import boulder_bonus, turn_token
+from .alignment import schema as alignment_schema, validate_alignment
 
 from PIL import Image, ImageOps
 from django.contrib import messages
@@ -104,7 +106,8 @@ def serialize_char(c, user):
                           'hit_bonus': hit_bonus,
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
-                          'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc), 'critical': formula(c, a, True, calc),
+                          'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, True, calc,scene=scene),
+                          'damage_contributions':boulder_bonus(c,a,calc,scene),
                           'rolls_required': rolls_required(a) or bool(a.data.get('weapon'))})
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
@@ -112,7 +115,7 @@ def serialize_char(c, user):
             'private_notes': c.private_notes if c.owner_id == user.id else None,
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
             'memberships': list(c.memberships.values('campaign_id', 'squad_id')),
-            'items': list(c.items.values('id', 'name', 'quantity', 'equipped', 'slot', 'data')),
+            'items': list(c.items.values('id', 'entry_id', 'name', 'quantity', 'equipped', 'slot', 'data')),
             'scene_id': scene.id if scene else None}
 
 
@@ -132,7 +135,7 @@ def state(request):
                           'players': list(c.players.values('id', 'username')) if member else [],
                           'notes': c.notes if member else None, 'note_revision': c.note_revision if member else None,
                           'squads': list(c.squads.values('id', 'name')),
-                          'items': list(c.items.values('id', 'name', 'quantity', 'data')) if member else []})
+                          'items': list(c.items.values('id', 'entry_id', 'name', 'quantity', 'data')) if member else []})
     sessions = [{'id': s.id, 'name': s.name, 'campaign_id': s.campaign_id, 'squad_id': s.squad_id,
                  'characters': list(s.characters.values_list('id', flat=True))}
                 for s in Session.objects.filter(campaign_id__in=accessible)]
@@ -148,7 +151,7 @@ def state(request):
                         'master': master(request.user)}, 'users': list(User.objects.values('id', 'username')) if master(request.user) else [],
                         'characters': [serialize_char(c, request.user)
                         for c in Character.objects.select_related('owner').prefetch_related('abilities', 'items', 'memberships')],
-                        'rules': {'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
+                        'rules': {'alignment':alignment_schema(), 'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
                         'campaigns': campaigns, 'sessions': sessions, 'scenes': scenes, 'events': visible_events,
                         'catalog': list(Entry.objects.filter(archived=False).values('id', 'kind', 'name', 'description', 'data', 'source'))})
 
@@ -228,6 +231,17 @@ def execute(user, p):
             for school in Entry.objects.filter(pk__in=school_ids, kind='school'):
                 if not klass or school.name not in klass.data.get('allowed_schools', []):
                     raise ValueError('Выберите школу, доступную выбранному классу')
+        if choices_changed(['alignment_values','alignment_extra','priorities']):
+            available = validate_alignment(c.info)
+            priorities=c.info.get('priorities') or []
+            if len(priorities)>2 or len(set(map(str,priorities)))!=len(priorities):
+                raise ValueError('Выберите два разных приоритета')
+            if priorities:
+                if len(c.info.get('alignment_values',[]))!=3 or not all(c.info['alignment_values']):
+                    raise ValueError('Сначала выберите три основные ценности')
+                selected=list(Entry.objects.filter(pk__in=priorities,kind='effect',data__priority=True))
+                if len(selected)!=len(priorities) or any(e.name not in available for e in selected):
+                    raise ValueError('Приоритет недоступен для выбранных ценностей')
         creating = not c.pk
         c.revision += 1
         c.save()
@@ -449,7 +463,7 @@ def execute(user, p):
         change=Change(user,'Эффект · '+name,current_scene(c))
         change.watch(c)
         if p.get('remove'):
-            c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if e.get('key')!=p.get('key')]
+            c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if e.get('key')!=p.get('effect_key')]
         else:
             apply_status(c,effect,p.get('reaction'))
         change.finish()
@@ -547,6 +561,8 @@ def item_action(user, p):
     if op in ['item.delete','item.transfer'] and item.character_id and current_scene(item.character):
         raise ValueError('Передача и удаление предметов доступны после боя. В бою используйте надевание/снятие.')
     if op == 'item.equip':
+        if item.data.get('item_type') in ['currency','consumable']:
+            raise ValueError('Этот предмет нельзя надеть')
         if not item.character_id:
             raise ValueError('Сначала передайте предмет персонажу')
         c = owned(user,item.character_id)
@@ -591,17 +607,29 @@ def item_action(user, p):
             else:
                 item.campaign = access_campaign(user, p['campaign'])
         if item.character_id and current_scene(item.character):
-            raise ValueError('В первой версии меняйте экипировку вне боя; действия смены оружия появятся отдельно.')
+            raise ValueError('Свойства предмета меняются вне боя. Для смены оружия используйте «Надеть».')
         item.name = str(p.get('name', '')).strip()[:160]
         if not item.name:
             raise ValueError('Укажите предмет')
-        item.quantity = bounded(p.get('quantity', 1), 1, 100000)
+        item.quantity = bounded(p.get('quantity', 1), 0, 100000)
         item.equipped = bool(p.get('equipped')) if item.character_id else False
         item.slot = str(p.get('slot', ''))[:40]
         data = p.get('data', {})
         if not isinstance(data, dict):
             raise ValueError('Некорректные свойства')
         validate_entry(data)
+        item_type=data.get('item_type','other')
+        if item_type not in ['weapon','armor','shield','consumable','currency','other']:
+            raise ValueError('Неизвестный тип предмета')
+        if item_type=='currency':
+            item.name='Золото';item.equipped=False;item.slot='';data={'item_type':'currency'}
+        if item_type=='consumable':item.equipped=False
+        if item_type=='weapon' and data.get('dice'):
+            import re
+            if not re.fullmatch(r'[1-9]\d{0,2}[кd][1-9]\d{0,2}',data['dice']):
+                raise ValueError('Урон оружия: количество и грани кубиков, например 1к6')
+        if 'entry' in p:
+            item.entry=get_object_or_404(Entry,pk=p['entry'],kind='item') if p['entry'] else None
         item.data = data
     item.save()
 
@@ -635,6 +663,12 @@ def use_ability(user, p):
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
+    if not aura and p.get('outcome')!='miss':
+        contributions=boulder_bonus(c,a,computed(c),scene)
+        change.inputs['damage_contributions']=contributions
+        for contribution in contributions:
+            if contribution.get('once_per_turn'):
+                c.runtime.setdefault('once_per_turn',{})[contribution['key']]=turn_token(scene)
     if not aura:
         act = d.get('action', 'main')
         if act != 'free':

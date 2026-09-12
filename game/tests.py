@@ -362,3 +362,90 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'journal.save','campaign':self.campaign.id,'title':'','steps':[]},400)
         self.post(self.alice,{'op':'journal.save','campaign':self.campaign.id,'title':'Задание','steps':[{'text':'Этап','done':'yes'}]},400)
         self.post(self.alice,{'op':'journal.save','campaign':self.campaign.id,'title':'Задание','status':'unknown'},400)
+
+    def test_alignment_diagram_solid_and_dotted_paths(self):
+        from .alignment import available_priorities, validate_alignment, PAIRS
+        import itertools
+        self.assertEqual(available_priorities(['Личное','Свобода','Хаос']),{'Независимость','Творчество'})
+        self.assertEqual(available_priorities(['Личное','Необходимость','Хаос']),{'Эгоизм','Адаптация','Интуиция'})
+        self.assertEqual(available_priorities(['Личное','Необходимость','Хаос'],'Порядок'),{'Статус','Закон','Интуиция'})
+        self.assertEqual(available_priorities(['Общее','Свобода','Порядок']),{'Альтруизм','Решимость','Система'})
+        for base in itertools.product(*PAIRS):
+            for extra in ['',*[v for pair in PAIRS for v in pair if v not in base]]:
+                options=validate_alignment({'alignment_values':list(base),'alignment_extra':extra})
+                self.assertGreaterEqual(len(options),2)
+        for info in [{'alignment_values':['Личное','Общее','Хаос']},
+                     {'alignment_values':['Личное','Свобода','Хаос'],'alignment_extra':'Хаос'},
+                     {'alignment_values':['Личное','','Хаос'],'alignment_extra':'Порядок'}]:
+            with self.assertRaises(ValueError):validate_alignment(info)
+
+    def test_alignment_priorities_validated_against_source(self):
+        independent=Entry.objects.create(kind='effect',name='Независимость',data={'priority':True})
+        creative=Entry.objects.create(kind='effect',name='Творчество',data={'priority':True})
+        ego=Entry.objects.create(kind='effect',name='Эгоизм',data={'priority':True})
+        p={'op':'character.save','id':self.a.id,'revision':0,'name':'А','level':1,
+           'info':{'alignment_values':['Личное','Свобода','Хаос'],'priorities':[independent.id,creative.id]}}
+        self.post(self.alice,p)
+        self.a.refresh_from_db();self.assertEqual(self.a.info['priorities'],[independent.id,creative.id])
+        p['revision']=self.a.revision;p['info']['priorities']=[ego.id,creative.id]
+        self.post(self.alice,p,400)
+        self.a.refresh_from_db();self.assertEqual(self.a.info['priorities'],[independent.id,creative.id])
+
+    def test_typed_items_currency_and_equipment(self):
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Золото','quantity':0,'equipped':True,
+                             'data':{'item_type':'currency','armor':50,'effects':[{'stat':'max_hp','value':100}]}})
+        money=self.a.items.get(name='Золото')
+        self.assertFalse(money.equipped);self.assertEqual(money.data,{'item_type':'currency'});self.assertEqual(money.quantity,0)
+        self.post(self.alice,{'op':'item.equip','id':money.id},400)
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Зелье','quantity':2,'equipped':True,'data':{'item_type':'consumable','description':'Лечит после броска'}})
+        potion=self.a.items.get(name='Зелье');self.assertFalse(potion.equipped)
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Сломанное оружие','quantity':1,'data':{'item_type':'weapon','dice':'eval(1)'}},400)
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Кольчуга','quantity':1,'equipped':True,
+                             'data':{'item_type':'armor','armor':4,'effects':[{'key':'item_bonus:max_hp','stat':'max_hp','value':5}]}})
+        self.assertEqual(computed(self.a)['ac'],9)
+        self.assertEqual(computed(self.a)['max_hp'],33)
+
+    def test_boulder_bonus_once_per_target_scene_turn_and_undo(self):
+        boulder=Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive','stat':'wis'})
+        attack=Entry.objects.create(kind='ability',name='Ближний удар',data={'category':'active','action':'free',
+                                   'formula':'1к6','damage':True,'rolls':True,'keywords':['Ближний']})
+        self.a.abilities.add(boulder,attack);self.a.stats['wis']=16;self.a.save()
+        scene=self.start()
+        self.assertEqual(formula(self.a,attack,scene=scene),'1к6 +3 [Земля]')
+        p={'op':'ability.use','character':self.a.id,'ability':attack.id,'roll_result':'12','outcome':'miss'}
+        self.post(self.alice,p);self.a.refresh_from_db()
+        self.assertEqual(formula(self.a,attack,scene=scene),'1к6 +3 [Земля]')
+        self.post(self.alice,{**p,'outcome':'hit'});self.a.refresh_from_db()
+        self.assertEqual(formula(self.a,attack,scene=scene),'1к6')
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(formula(self.a,attack,True,scene=scene),'2к6 +3 [Земля]')
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertEqual(formula(self.a,attack,scene=scene),'1к6')
+        self.turn(scene,self.alice);scene.refresh_from_db();self.a.refresh_from_db()
+        self.assertEqual(formula(self.a,attack,scene=scene),'1к6 +3 [Земля]')
+        attack.data['keywords']=['Дальнобойный 5'];attack.save()
+        self.assertEqual(formula(self.a,attack,scene=scene),'1к6')
+
+    def test_boulder_stun_flat_damage(self):
+        boulder=Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive','stat':'wis'})
+        self.a.abilities.add(boulder)
+        spell=Entry.objects.create(kind='ability',name='Разрыв друзы',data={'category':'active','formula':'1к6','damage':True,
+                                  'keywords':['Вокруг 1'],'effects':[{'name':'Оглушение','stat':'status','value':3}]})
+        self.assertEqual(formula(self.a,spell),'1к6 +3 [Земля]')
+
+    def test_weapon_bonuses_follow_selected_weapon(self):
+        first=Item.objects.create(character=self.a,name='Первый кинжал',equipped=True,data={'dice':'1к4','effects':[{'stat':'hit','value':1}]})
+        second=Item.objects.create(character=self.a,name='Второй кинжал',equipped=True,data={'dice':'1к4','effects':[{'stat':'hit','value':4}]})
+        self.a.runtime['weapon_id']=first.id
+        self.assertEqual(computed(self.a)['hit'],1)
+        self.a.runtime['weapon_id']=second.id
+        self.assertEqual(computed(self.a)['hit'],4)
+        self.a.runtime['weapon_id']=0
+        self.assertEqual(computed(self.a)['hit'],0)
+
+    def test_remove_effect_uses_effect_key_not_request_receipt(self):
+        self.post(self.gm,{'op':'effect.apply','character':self.a.id,'name':'Благословение','value':2})
+        self.post(self.gm,{'op':'effect.apply','character':self.a.id,'remove':True,'effect_key':'status:Благословение'})
+        self.a.refresh_from_db();self.assertEqual(computed(self.a)['hit'],0)
+        self.post(self.gm,{'op':'undo'})
+        self.a.refresh_from_db();self.assertEqual(computed(self.a)['hit'],2)

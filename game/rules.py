@@ -18,8 +18,13 @@ def definition(pk):
 
 def computed(c):
     stats = {k: int(c.stats.get(k, 10)) for k, _ in STATS}
+    equipped = list(c.items.filter(equipped=True).order_by('id'))
+    weapons = [i for i in equipped if i.data.get('dice')]
+    weapon_id=c.runtime.get('weapon_id',c.info.get('weapon_id'))
+    selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
     effects = list(c.runtime.get('effects', []))
-    effects.extend(e for i in c.items.filter(equipped=True) for e in i.data.get('effects',[]))
+    effects.extend(e for i in equipped for e in i.data.get('effects',[])
+                   if not (i.data.get('dice') and i!=selected and e.get('stat') in ['hit','damage']))
     for ability in c.abilities.all():
         if ability.data.get('category') == 'passive' and not ability.data.get('aura') and not ability.data.get('manual'):
             effects.extend(e for e in ability.data.get('effects', []) if not e.get('manual'))
@@ -44,10 +49,6 @@ def computed(c):
     weapon_hit = 0
     weapon_school = primary
     crit = 0
-    equipped = list(c.items.filter(equipped=True).order_by('id'))
-    weapons = [i for i in equipped if i.data.get('dice')]
-    weapon_id=c.runtime.get('weapon_id',c.info.get('weapon_id'))
-    selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
     school_ids = [c.info.get('school_id'),c.info.get('secondary_school_id')] + c.info.get('additional_school_ids',[])
     trained = {e.name for e in Entry.objects.filter(pk__in=[x for x in school_ids if str(x).isdigit()],kind='school')}
     for item in equipped:
@@ -110,7 +111,7 @@ def limit(level, circle):
     return table[min(10, max(1, level))][min(3, max(1, circle)) - 1]
 
 
-def formula(c, ability, critical=False, calc=None):
+def formula(c, ability, critical=False, calc=None, scene=None):
     calc = calc or computed(c)
     d = ability.data
     mod_key = d.get('stat') or calc['primary']
@@ -119,7 +120,7 @@ def formula(c, ability, critical=False, calc=None):
     result = d.get('formula', '')
     standard = bool(d.get('system')) or ability.name in ['Стандартная атака','Провоцированная атака']
     if standard and calc['unarmed']:
-        return str(calc['mods']['str'] + calc['damage'])
+        result=str(calc['mods']['str'])
     weapon_mod = calc['mods'].get(mod_key,0)
     if standard and not calc['weapon_proficient']:
         weapon_mod = 0
@@ -130,7 +131,7 @@ def formula(c, ability, critical=False, calc=None):
     if critical and result:
         factor = 2 + int(d.get('crit', 0)) + (calc['crit'] if d.get('weapon') else 0)
         result = re.sub(r'(\d+)[кd](\d+)', lambda m: f'{int(m[1]) * factor}к{m[2]}', result)
-        if calc['orc'] and d.get('weapon'):
+        if calc['orc'] and d.get('weapon') and calc['weapon']:
             result += ' + ' + calc['weapon']
     result = result.replace('Мод', str(weapon_mod))
     damage = calc['damage']
@@ -139,7 +140,11 @@ def formula(c, ability, critical=False, calc=None):
             damage += e.get('value', 0)
     if result and d.get('damage', False) and damage:
         result += f' {damage:+d}'
-    return result
+    from .passives import boulder_bonus
+    for contribution in boulder_bonus(c,ability,calc,scene or current_scene(c)):
+        if contribution['value']:
+            result += f" {contribution['value']:+d} [Земля]"
+    return result.strip()
 
 
 def current_scene(c):
