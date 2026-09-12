@@ -27,7 +27,7 @@ class Command(BaseCommand):
             User.objects.create_superuser('admin', password=password)
         text = (settings.BASE_DIR / 'rules/player-book.txt').read_text()
         def add(kind, name, desc='', data=None, source='Книга игрока'):
-            return Entry.objects.get_or_create(kind=kind, name=name, defaults={'description': desc,
+            return Entry.objects.filter(personal_character__isnull=True).get_or_create(kind=kind, name=name, defaults={'description': desc,
                        'data': data or {}, 'source': source})[0]
         for name, stat in SCHOOL.items():
             add('school', name, data={'stat': stat})
@@ -113,4 +113,4 @@ class Command(BaseCommand):
         from django.core.management import call_command
         call_command('structure_catalog')
         call_command('audit_book')
-        self.stdout.write(f'Справочник: {Entry.objects.count()} записей. Мастер готов.')
+        self.stdout.write(f'Справочник: {Entry.objects.filter(personal_character__isnull=True).count()} записей. Мастер готов.')

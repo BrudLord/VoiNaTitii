@@ -97,8 +97,9 @@ def serialize_char(c, user):
     abilities = []
     calc = computed(c)
     learned = {a.id:a for a in c.abilities.all() if not a.archived}
-    learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
+    learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False,personal_character__isnull=True)})
     for a in learned.values():
+        definition={'id':a.id,'kind':a.kind,'name':a.name,'description':a.description,'data':copy.deepcopy(a.data),'personal':a.personal_character_id==c.id}
         a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)),calc)
         d = copy.deepcopy(a.data)
         charged=charged_arrows.profile(c,a)
@@ -112,7 +113,7 @@ def serialize_char(c, user):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера','Линия','Конус'))),d.get('range',''))
         minor_attack=stances.minor_attack(c,a)
         hit_bonus = targeting.hit_bonus(c,a,calc)
-        abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
+        abilities.append({'definition':definition,'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
                           'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
                           'attack_setup':setup, 'charged_arrows':charged,
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
@@ -273,7 +274,10 @@ def execute(user, p):
         ids = p.get('abilities', [])
         if not isinstance(ids, list):
             raise ValueError('Некорректный список умений')
-        c.abilities.set(Entry.objects.filter(id__in=ids, kind='ability', archived=False))
+        from django.db.models import Q
+        choices=Entry.objects.filter(id__in=ids,kind='ability',archived=False).filter(Q(personal_character__isnull=True)|Q(personal_character=c))
+        if choices.count()!=len(set(ids)):raise ValueError('В списке есть недоступное умение')
+        c.abilities.set(choices)
         if creating and p.get('campaign'):
             campaign = access_campaign(user, p['campaign'])
             campaign.players.add(c.owner)
@@ -356,9 +360,12 @@ def execute(user, p):
         c.note_revision += 1
         c.save(update_fields=['notes', 'note_revision'])
         return {'text': c.notes}
+    elif op == 'character.ability.save':
+        from .personal_abilities import save
+        return save(user,p)
     elif op == 'entry.save':
         require_master(user)
-        entry = get_object_or_404(Entry, pk=p['id']) if p.get('id') else Entry()
+        entry = get_object_or_404(Entry, pk=p['id'],personal_character__isnull=True) if p.get('id') else Entry()
         if p.get('archive'):
             entry.archived = True
         else:
@@ -592,7 +599,7 @@ def execute(user, p):
         change.finish()
     elif op == 'enchantment.learn':
         c=owned(user,p['character'])
-        e=get_object_or_404(Entry,pk=p['entry'],archived=False)
+        e=get_object_or_404(Entry,pk=p['entry'],archived=False,personal_character__isnull=True)
         if not enchantments.profile(e): raise ValueError('Выберите зачарование')
         if p.get('remove'): c.abilities.remove(e)
         else: c.abilities.add(e)

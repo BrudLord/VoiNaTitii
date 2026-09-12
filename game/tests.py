@@ -2801,3 +2801,55 @@ class GameTests(TestCase):
         rows=[data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text()) if name=='Широкий замах']
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0]['wide_swing'],{'hit':1,'reach':1})
+
+    def personal_ability_payload(self):
+        a=Entry.objects.create(kind='ability',name='Личное благословение',description='Общий текст',data={'category':'active','action':'main','circle':1,'effects':[{'name':'Бонус','stat':'hit','value':1,'turns':3}]})
+        self.a.abilities.add(a);self.b.abilities.add(a)
+        return a,{'op':'character.ability.save','character':self.a.pk,'revision':self.a.revision,'id':a.pk,'name':a.name,'description':'Личный текст','data':{**a.data,'effects':[{'name':'Бонус','stat':'hit','value':4,'turns':3}]}}
+
+    def test_personal_ability_isolated_from_other_characters_and_catalogue(self):
+        from .catalogue import payload
+        from .views import serialize_char
+        a,p=self.personal_ability_payload();before=payload()['catalog_revision']
+        response=self.post(self.alice,p);self.a.refresh_from_db()
+        personal=self.a.abilities.get(personal_character=self.a);a.refresh_from_db()
+        self.assertNotEqual(personal.pk,a.pk);self.assertEqual(personal.personal_character_id,self.a.pk)
+        self.assertEqual(a.description,'Общий текст');self.assertEqual(self.b.abilities.get().pk,a.pk)
+        self.assertEqual(payload()['catalog_revision'],before)
+        row=next(x for x in serialize_char(self.a,self.alice)['abilities'] if x['id']==personal.pk)
+        self.assertTrue(row['definition']['personal']);self.assertEqual(row['definition']['data']['effects'][0]['value'],4)
+        self.start();self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':personal.pk,'targets':[self.b.pk]})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],4)
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_personal_ability_permissions_revision_and_battle_lock(self):
+        a,p=self.personal_ability_payload()
+        self.post(self.bob,p,403)
+        self.post(self.alice,{**p,'revision':-1},400)
+        self.post(self.alice,{**p,'data':{**p['data'],'system':True}},400)
+        self.post(self.alice,p);self.a.refresh_from_db();personal=self.a.abilities.get(personal_character=self.a)
+        self.post(self.alice,p,400)
+        self.post(self.bob,{**p,'id':personal.pk,'character':self.b.pk,'revision':self.b.revision},403)
+        self.start();self.a.refresh_from_db()
+        self.post(self.alice,{**p,'id':personal.pk,'revision':self.a.revision},400)
+        self.assertEqual(Entry.objects.filter(personal_character=self.a).count(),1)
+
+    def test_personal_ability_updates_existing_copy_and_master_can_edit_it(self):
+        a,p=self.personal_ability_payload();self.post(self.alice,p);self.a.refresh_from_db();personal=self.a.abilities.get(personal_character=self.a)
+        p.update(id=personal.pk,revision=self.a.revision,description='Уточнение мастера')
+        self.post(self.gm,p);personal.refresh_from_db()
+        self.assertEqual(personal.description,'Уточнение мастера')
+        self.assertEqual(Entry.objects.filter(personal_character=self.a).count(),1)
+        self.post(self.gm,{'op':'entry.save','id':personal.pk,'archive':True},404)
+
+    def test_personal_ability_selection_and_book_refresh_preserve_isolation(self):
+        from django.core.management import call_command
+        from io import StringIO
+        a,p=self.personal_ability_payload();self.post(self.alice,p);self.a.refresh_from_db();personal=self.a.abilities.get(personal_character=self.a)
+        save={'op':'character.save','id':self.a.pk,'revision':self.a.revision,'name':self.a.name,'abilities':[personal.pk]}
+        self.post(self.alice,save);self.assertEqual(self.a.abilities.get(personal_character=self.a).pk,personal.pk)
+        self.post(self.bob,{**save,'id':self.b.pk,'revision':self.b.revision,'name':self.b.name},400)
+        original_data=dict(personal.data)
+        call_command('structure_catalog',stdout=StringIO())
+        call_command('audit_book',stdout=StringIO())
+        personal.refresh_from_db();self.assertEqual(personal.data,original_data);self.assertEqual(personal.description,'Личный текст')

@@ -15,7 +15,7 @@ class Command(BaseCommand):
         clock, _ = Clock.objects.select_for_update().get_or_create(pk=1)
         text = (settings.BASE_DIR / 'rules/player-book.txt').read_text()
         for (kind, name), choices in book_choices(text).items():
-            entry = Entry.objects.filter(kind=kind, name=name).first()
+            entry = Entry.objects.filter(personal_character__isnull=True).filter(kind=kind, name=name).first()
             if entry:
                 data = {**choices, **entry.data}  # Preserve master edits to these choices.
                 if data != entry.data:
@@ -36,13 +36,13 @@ class Command(BaseCommand):
             race = match[1].strip()
             base = re.split(r'^#### |^\{\{|^!\[|^\\(?:column|page)', match[2], maxsplit=1, flags=re.M)[0].strip()
             traits = base.split('\n\n', 1)[-1].strip()
-            Entry.objects.get_or_create(kind='ability', name=f'Расовые особенности: {race}', defaults={
+            Entry.objects.filter(personal_character__isnull=True).get_or_create(kind='ability', name=f'Расовые особенности: {race}', defaults={
                 'description': traits, 'source': 'Книга игрока, глава 2',
                 'data': {'category': 'passive', 'manual': True, 'keywords': ['Расовое'],
                          'source_name': race, 'book_group': 'race',
                          'book_order': text[:text.index('### ' + race + '\n')].count('\n') + 1}})
         changed = 0
-        for entry in Entry.objects.filter(kind='ability'):
+        for entry in Entry.objects.filter(personal_character__isnull=True).filter(kind='ability'):
             data = dict(entry.data)
             line = re.search(r'строка (\d+)', entry.source)
             chapter, source = contexts.get(int(line[1]), (0, '')) if line else (0, '')

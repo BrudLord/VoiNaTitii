@@ -8,7 +8,7 @@ from .statuses import STATUS, NEUTRAL, CONSTRUCTIVE
 
 
 def payload():
-    entries=list(Entry.objects.filter(archived=False).order_by('id'))
+    entries=list(Entry.objects.filter(archived=False,personal_character__isnull=True).order_by('id'))
     fields=['id','kind','name','description','data','source']
     result={'catalog':[{key:getattr(e,key) for key in fields} for e in entries],
             'rules':{'crafting':crafting.catalogue(entries),'enchantments':enchantments.catalogue(entries),

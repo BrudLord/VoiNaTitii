@@ -18,7 +18,7 @@ def profile(entry):
 
 
 def catalogue(entries=None):
-    return [{'id':e.id,'name':e.name,**profile(e)} for e in (Entry.objects.filter(archived=False) if entries is None else entries) if profile(e)]
+    return [{'id':e.id,'name':e.name,**profile(e)} for e in (Entry.objects.filter(archived=False,personal_character__isnull=True) if entries is None else entries) if profile(e)]
 
 
 def apply(user,p):
