@@ -1,3 +1,4 @@
+from . import defenses
 import copy
 import difflib
 import io
@@ -103,6 +104,8 @@ def serialize_char(c, user):
         definition=ability_definition(a)
         a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)),calc)
         d = copy.deepcopy(a.data)
+        defense=defenses.profile(a)
+        if defense is not None:d['manual']=False
         charged=charged_arrows.profile(c,a)
         if charged and charged['prepare']:d['manual']=False
         if a.name==weaving.NAME or weaponry.unarmed_profile(a) is not None:d['manual']=False
@@ -116,7 +119,7 @@ def serialize_char(c, user):
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'definition':definition,'id': a.id, 'name': a.display_name, 'description': a.description, 'data': d,
                           'roll_conditions':targeting.roll_conditions(a,calc),'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
-                          'attack_setup':setup, 'charged_arrows':charged,
+                          'attack_setup':setup, 'charged_arrows':charged,'damage_reduction':defense,
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
                           'weavable':weaving.magical(a),'weaving_area':weaving.area(a),
                           'physical_weapon_units':targeting.physical_weapon_units(a,calc),
@@ -701,6 +704,7 @@ def execute(user, p):
 
 
 def validate_entry(d):
+    defenses.validate(d)
     enchantments.validate_profile(d)
     weaponry.validate_profile(d)
     weaponry.validate_wide_swing(d)
@@ -798,9 +802,11 @@ def use_ability(user, p, embedded=False):
     charged=charged_arrows.resolve(c,a,p,ids) if not aura else None
     setup=prepared_attacks.validate(c,a,p,ids) if not aura else None
     weave=weaving.resolve(c,a,p,ids) if not aura else None
+    defense=defenses.resolve(c,a,p,computed(c)) if not aura else None
     stance=stances.activation(c,a,p) if not aura else None
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.display_name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
+    if defense:change.inputs['damage_reduction']=defense
     change.effect_targets=pool_targets
     change.watch(c)
     if not aura and not embedded:change.action(c,'reaction' if p.get('as_reaction') else d.get('action','main'))

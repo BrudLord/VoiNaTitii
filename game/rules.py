@@ -130,6 +130,7 @@ def computed(c):
             'weapon_hand':selected.data.get('hand','main') if selected else 'main',
             'offhand_penalty':offhand_penalty(selected.data) if selected else 0,
             'weapon_id':weapon_item,'weapon_proficient':weapon_proficient,'weapon_hit':weapon_hit,
+            'has_equipped_weapons':any(i.data.get('dice') or i.data.get('item_type')=='weapon' for i in equipped),
             'unarmed_dice':unarmed_dice,'ignore_weapon_requirements':any(p['ignore_requirements'] for p in unarmed_profiles),
             'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
             'support':support,'support_mastery':support_mastery,
@@ -213,6 +214,9 @@ def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=F
         return 'Только вне боя' if scene else ''
     if not scene:
         return 'Начните бой'
+    from .defenses import profile as defense_profile
+    defense=defense_profile(ability)
+    if defense and defense['unarmed'] and calc['has_equipped_weapons']:return 'Уберите оружие из рук для этой реакции'
     from .stances import sphere_profile, mode
     if sphere_profile(ability) is not None and not mode(c):return 'Сначала активируйте Стихийную поддержку'
     if getattr(ability,'name','')=='Передача истощения':

@@ -3271,3 +3271,50 @@ class GameTests(TestCase):
         self.assertEqual(computed(self.a)['weapon'],'2к6');self.assertFalse(computed(self.a)['ignore_weapon_requirements'])
         for p in [{'dice':'0к6','ignore_requirements':True},{'dice':'1к8','ignore_requirements':'yes'},{'dice':'1к8'}]:
             with self.assertRaises(ValueError):validate_entry({'unarmed_combat':p})
+
+    def parry_setup(self):
+        ability=Entry.objects.create(kind='ability',name='Парирующие потоки',data={'category':'active','circle':1,'action':'reaction','rolls':False})
+        self.a.abilities.add(ability);scene=self.start();self.turn(scene,self.alice)
+        return {'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.a.pk],'incoming_damage':9,'attack_hit':True,'outcome':'hit'}
+
+    def test_parrying_currents_halves_declared_damage_without_changing_hp(self):
+        p=self.parry_setup();self.a.refresh_from_db();before=dict(self.a.runtime)
+        self.post(self.alice,p)
+        self.a.refresh_from_db();row=Event.objects.latest('id').inputs['damage_reduction']
+        self.assertEqual((row['incoming'],row['divisor'],row['remaining']),(9,2,4.5))
+        self.assertEqual(self.a.runtime['hp'],before['hp']);self.assertEqual(self.a.runtime['temp'],before['temp'])
+        self.assertEqual(self.a.runtime['actions']['reaction'],before['actions']['reaction']-1)
+        self.assertEqual(self.a.runtime['used'][str(p['ability'])],1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime,before)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['used'][str(p['ability'])],1)
+
+    def test_parry_requires_empty_hands_even_when_unarmed_attack_is_selected(self):
+        from .rules import availability
+        p=self.parry_setup()
+        held=Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6'})
+        self.a.refresh_from_db();self.a.runtime['weapon_id']=0;self.a.save()
+        calc=computed(self.a);self.assertTrue(calc['unarmed']);self.assertTrue(calc['has_equipped_weapons'])
+        self.post(self.alice,p,400)
+        from .rules import current_scene
+        self.assertEqual(availability(self.a,Entry.objects.get(pk=p['ability']),current_scene(self.a)),'Уберите оружие из рук для этой реакции')
+        held.equipped=False;held.save();self.post(self.alice,p)
+
+    def test_parry_rejects_missing_confirmation_invalid_damage_and_foreign_target(self):
+        p=self.parry_setup();count=Event.objects.count()
+        for update in [{'attack_hit':False},{'incoming_damage':None},{'incoming_damage':True},{'incoming_damage':-1},{'incoming_damage':1.5},
+                       {'incoming_damage':100001},{'targets':[self.b.pk]},{'outcome':'critical'},{'outcome':'miss'}]:
+            self.post(self.alice,{**p,**update},400)
+        self.assertEqual(Event.objects.count(),count)
+
+    def test_parry_profile_is_imported_editable_and_validated(self):
+        from .book_audit import abilities
+        from .views import validate_entry
+        from django.conf import settings
+        rows={name:data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text())}
+        self.assertEqual(rows['Парирующие потоки']['damage_reduction'],{'divisor':2,'unarmed':True})
+        self.assertFalse(rows['Парирующие потоки']['manual'])
+        p=self.parry_setup();ability=Entry.objects.get(pk=p['ability']);ability.name='Своя защита';ability.data['damage_reduction']={'divisor':3,'unarmed':False};ability.save()
+        Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6'})
+        self.post(self.alice,p);self.assertEqual(Event.objects.latest('id').inputs['damage_reduction']['remaining'],3)
+        for profile in [{'divisor':0,'unarmed':True},{'divisor':2,'unarmed':1},{'divisor':True,'unarmed':True}]:
+            with self.assertRaises(ValueError):validate_entry({'damage_reduction':profile})
