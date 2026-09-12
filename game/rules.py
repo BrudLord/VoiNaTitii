@@ -18,13 +18,16 @@ def definition(pk):
 
 def computed(c):
     stats = {k: int(c.stats.get(k, 10)) for k, _ in STATS}
-    equipped = list(c.items.filter(equipped=True).order_by('id'))
+    equipped = list(c.items.filter(equipped=True,quantity__gt=0).order_by('id'))
     weapons = [i for i in equipped if i.data.get('dice')]
     weapon_id=c.runtime.get('weapon_id',c.info.get('weapon_id'))
     selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
+    from .enchantments import equipment
+    enchantments, focus_id = equipment(c, equipped, selected)
     effects = list(c.runtime.get('effects', []))
-    effects.extend(e for i in equipped for e in i.data.get('effects',[])
-                   if not (i.data.get('dice') and i!=selected and e.get('stat') in ['hit','damage']))
+    effects.extend({'stat':'speed','value':p['speed']} for p in enchantments if p.get('speed'))
+    effects.extend({**e,**({'ability_scope':'weapon' if i.data.get('dice') else 'focus'} if (i.data.get('dice') or i.data.get('item_type')=='focus') and e.get('stat') in ['hit','damage'] else {})} for i in equipped for e in i.data.get('effects',[])
+                   if not ((i.data.get('dice') and i!=selected or i.data.get('item_type')=='focus' and i.id!=focus_id) and e.get('stat') in ['hit','damage']))
     for ability in c.abilities.all():
         if ability.data.get('category') == 'passive' and not ability.data.get('aura') and not ability.data.get('manual'):
             effects.extend(e for e in ability.data.get('effects', []) if not e.get('manual'))
@@ -84,6 +87,9 @@ def computed(c):
             'ac': max(0, 5 + mods['dex'] + min(5, armor) + other_armor + int(rd.get('ac_bonus',0)) + bonuses['ac']),
             'speed': max(0, int(rd.get('speed', 6)) + bonuses['speed']),
             'hit': bonuses['hit'], 'damage': bonuses['damage'], 'primary': primary,
+            'enchantments':enchantments, 'focus_id':focus_id,
+            'initiative':mods['dex'] + sum(p.get('initiative',0) for p in enchantments),
+            'forced_movement_reduction':sum(p.get('forced_movement_reduction',0) for p in enchantments),
             'weapon_stat': weapon_school, 'weapon': weapon, 'crit': crit,
             'weapon_id':weapon_item,'weapon_proficient':weapon_proficient,'weapon_hit':weapon_hit,
             'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
@@ -134,10 +140,8 @@ def formula(c, ability, critical=False, calc=None, scene=None):
         if calc['orc'] and d.get('weapon') and calc['weapon']:
             result += ' + ' + calc['weapon']
     result = result.replace('Мод', str(weapon_mod))
-    damage = calc['damage']
-    for e in calc['effects']:
-        if e.get('keyword') in d.get('keywords', []) and e.get('keyword') and e.get('stat') == 'damage':
-            damage += e.get('value', 0)
+    from .enchantments import for_ability, ability_bonus
+    damage = ability_bonus(calc,ability,'damage') + sum(p.get('damage',0) for p in for_ability(calc,ability))
     if result and d.get('damage', False) and damage:
         result += f' {damage:+d}'
     from .passives import boulder_bonus

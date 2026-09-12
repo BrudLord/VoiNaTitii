@@ -449,3 +449,123 @@ class GameTests(TestCase):
         self.a.refresh_from_db();self.assertEqual(computed(self.a)['hit'],0)
         self.post(self.gm,{'op':'undo'})
         self.a.refresh_from_db();self.assertEqual(computed(self.a)['hit'],2)
+
+    def charm(self,name):
+        return Entry.objects.create(kind='ability',name=name,data={'category':'noncombat'})
+
+    def test_enchantment_compatibility_and_empty_equipment(self):
+        fire=self.charm('Малое зачарование огня')
+        p={'op':'item.save','character':self.a.id,'name':'Меч','quantity':1,'equipped':True,
+           'data':{'item_type':'weapon','dice':'1к6','enchantments':[fire.id]}}
+        self.post(self.alice,p)
+        attack=Entry.objects.create(kind='ability',name='Удар',data={'weapon':True,'formula':'1Ор','damage':True})
+        self.assertEqual(formula(self.a,attack),'1к6 +1')
+        self.assertEqual(formula(self.a,attack,True),'2к6 +1')
+        self.post(self.alice,{**p,'data':{'item_type':'armor','enchantments':[fire.id]}},400)
+        self.post(self.alice,{**p,'data':{'item_type':'weapon','enchantments':[fire.id,fire.id]}},400)
+        item=self.a.items.get(name='Меч')
+        self.post(self.alice,{**p,'id':item.id,'quantity':0})
+        item.refresh_from_db();self.assertFalse(item.equipped)
+        self.post(self.alice,{'op':'item.equip','id':item.id},400)
+
+    def test_enchantments_focus_weapon_scope_and_selection(self):
+        light=self.charm('Малое зачарование света');lightning=self.charm('Малое зачарование молнии')
+        sword=Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6','enchantments':[light.id]})
+        focus=Item.objects.create(character=self.a,name='Кольцо',equipped=True,data={'item_type':'focus','enchantments':[lightning.id,light.id]})
+        attack=Entry.objects.create(kind='ability',name='Удар',data={'weapon':True,'formula':'1Ор','damage':True})
+        magic=Entry.objects.create(kind='ability',name='Молния',data={'school_name':'Молния','formula':'1к8','damage':True})
+        plain=Entry.objects.create(kind='ability',name='Камень',data={'formula':'1к4','damage':True})
+        self.a.abilities.add(attack,magic,plain)
+        from .views import serialize_char
+        rows={a['name']:a for a in serialize_char(self.a,self.alice)['abilities']}
+        self.assertEqual(rows['Удар']['hit_bonus'],1);self.assertEqual(rows['Молния']['hit_bonus'],1)
+        self.assertEqual(rows['Камень']['hit_bonus'],0)
+        self.assertEqual(rows['Молния']['formula'],'1к8 +1');self.assertEqual(rows['Удар']['formula'],'1к6')
+        self.post(self.alice,{'op':'focus.select','character':self.a.id,'item':0})
+        self.a.refresh_from_db();self.assertEqual(formula(self.a,magic),'1к8')
+        self.post(self.bob,{'op':'focus.select','character':self.a.id,'item':focus.id},403)
+
+    def test_water_nature_fixed_healing_and_undo(self):
+        water=self.charm('Малое зачарование воды');nature=self.charm('Малое зачарование природы')
+        Item.objects.create(character=self.a,name='Доспех',equipped=True,data={'item_type':'armor','enchantments':[water.id]})
+        Item.objects.create(character=self.a,name='Фокус',equipped=True,data={'item_type':'focus','enchantments':[nature.id]})
+        self.a.runtime['hp']=20;self.a.save()
+        scene=self.start();self.a.refresh_from_db();self.assertEqual(self.a.runtime['temp'],5)
+        self.post(self.gm,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['temp'],0)
+        self.post(self.gm,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['temp'],5)
+        self.post(self.gm,{'op':'hp','character':self.a.id,'mode':'damage','value':7})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],20);self.assertEqual(self.a.runtime['temp'],0)
+        self.post(self.gm,{'op':'hp','character':self.a.id,'mode':'damage','value':5})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],16)
+        self.post(self.gm,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],20)
+        self.assertEqual(self.a.runtime['enchantment_uses']['hp_lost'],2)
+        self.post(self.gm,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],16)
+
+    def test_first_kill_heal_only_once_and_undo(self):
+        dark=self.charm('Малое зачарование тьмы')
+        Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6','enchantments':[dark.id]})
+        self.a.runtime['hp']=10;self.a.save();self.start()
+        self.post(self.alice,{'op':'enchantment.kill','character':self.a.id})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],15)
+        self.post(self.alice,{'op':'enchantment.kill','character':self.a.id},400)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],10)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],15)
+
+    def test_cold_weapon_hit_miss_and_undo(self):
+        cold=self.charm('Малое зачарование холода')
+        Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6','enchantments':[cold.id]})
+        attack=Entry.objects.create(kind='ability',name='Удар',data={'weapon':True,'formula':'1Ор','damage':True,'action':'free'})
+        self.a.abilities.add(attack);self.start()
+        p={'op':'ability.use','character':self.a.id,'ability':attack.id,'targets':[self.b.id],'roll_result':'6','outcome':'miss'}
+        self.post(self.alice,p);self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],6)
+        self.post(self.alice,{**p,'outcome':'hit'});self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],5)
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],6)
+
+    def test_initiative_pool_permutation_and_enchantment_bonus(self):
+        prime=self.charm('Малое изначальное зачарование');air=self.charm('Малое зачарование воздуха');earth=self.charm('Малое зачарование земли')
+        Item.objects.create(character=self.a,name='Доспех',equipped=True,data={'item_type':'armor','enchantments':[prime.id,air.id,earth.id]})
+        self.a.stats['dex']=14;self.a.save()
+        p={'op':'scene.start','session':self.session.id,'roll_pool':[8,6], 'assigned_rolls':{str(self.a.id):1,str(self.b.id):0}}
+        self.post(self.gm,{**p,'assigned_rolls':{str(self.a.id):0,str(self.b.id):0}},400)
+        self.post(self.gm,{**p,'roll_pool':[13,6]},400)
+        self.assertEqual(Scene.objects.count(),0)
+        result=self.post(self.gm,p);scene=Scene.objects.get(pk=result['id'])
+        self.assertEqual(scene.state['initiative'],{str(self.a.id):11,str(self.b.id):8})
+        self.assertEqual(scene.state['order'],[self.a.id,self.b.id])
+        self.assertEqual(computed(self.a)['speed'],7)
+        self.assertEqual(computed(self.a)['forced_movement_reduction'],1)
+
+    def test_enchantment_knowledge_permissions(self):
+        light=self.charm('Малое зачарование света')
+        self.post(self.bob,{'op':'enchantment.learn','character':self.a.id,'entry':light.id},403)
+        self.post(self.alice,{'op':'enchantment.learn','character':self.a.id,'entry':light.id})
+        self.assertTrue(self.a.abilities.filter(pk=light.id).exists())
+        self.post(self.alice,{'op':'enchantment.learn','character':self.a.id,'entry':light.id,'remove':True})
+        self.assertFalse(self.a.abilities.filter(pk=light.id).exists())
+
+    def test_custom_item_bonuses_do_not_leak_between_weapon_and_focus(self):
+        weapon=Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6','effects':[{'stat':'hit','value':2},{'stat':'damage','value':4}]})
+        focus=Item.objects.create(character=self.a,name='Фокус',equipped=True,data={'item_type':'focus','effects':[{'stat':'hit','value':1},{'stat':'damage','value':3}]})
+        Item.objects.create(character=self.a,name='Другой фокус',equipped=True,data={'item_type':'focus','effects':[{'stat':'hit','value':20},{'stat':'damage','value':30}]})
+        attack=Entry.objects.create(kind='ability',name='Удар',data={'weapon':True,'formula':'1Ор','damage':True})
+        magic=Entry.objects.create(kind='ability',name='Огонь',data={'school_name':'Огонь','formula':'1к8','damage':True})
+        self.a.abilities.add(attack,magic)
+        from .views import serialize_char
+        rows={a['name']:a for a in serialize_char(self.a,self.alice)['abilities']}
+        self.assertEqual(rows['Удар']['hit_bonus'],2);self.assertEqual(rows['Удар']['formula'],'1к6 +4')
+        self.assertEqual(rows['Огонь']['hit_bonus'],1);self.assertEqual(rows['Огонь']['formula'],'1к8 +3')
+
+    def test_equipping_nature_later_cannot_restore_previously_lost_hp(self):
+        nature=self.charm('Малое зачарование природы')
+        focus=Item.objects.create(character=self.a,name='Фокус',equipped=False,data={'item_type':'focus','enchantments':[nature.id]})
+        self.a.runtime['hp']=20;self.a.save();self.start()
+        self.post(self.gm,{'op':'hp','character':self.a.id,'mode':'damage','value':3})
+        self.post(self.alice,{'op':'item.equip','id':focus.id})
+        self.post(self.gm,{'op':'hp','character':self.a.id,'mode':'damage','value':2})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],15)
+
+    def test_custom_enchantment_profile_validation(self):
+        self.post(self.gm,{'op':'entry.save','kind':'ability','name':'Свои чары','data':{'enchantment':{'types':['weapon'],'damage':'wrong'}}},400)
+        self.post(self.gm,{'op':'entry.save','kind':'ability','name':'Свои чары','data':{'enchantment':{'types':['weapon'],'damage':2}}})
+        custom=Entry.objects.get(name='Свои чары')
+        self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Клинок','quantity':1,'data':{'item_type':'weapon','enchantments':[custom.id]}})

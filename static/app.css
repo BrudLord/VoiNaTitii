@@ -20,3 +20,5 @@
 [hidden]{display:none!important}
 
 @media(max-width:600px){.alignment-wheel{aspect-ratio:1 / 1.2}}
+
+.enchantment-choices{display:grid;gap:8px;margin-top:10px}.enchantment-choices label{display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid var(--border);border-radius:8px}.enchantment-choices input{width:auto}.enchantment-choices small{display:block;white-space:pre-line;max-height:90px;overflow:auto}.item-enchantment summary{font-size:12px}.item-enchantment p{white-space:pre-line}.initiative-pool,.initiative-assign{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.initiative-assign strong{display:block;margin-top:8px}

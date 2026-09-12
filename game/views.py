@@ -3,6 +3,7 @@ import difflib
 import io
 import json
 import uuid
+from . import enchantments
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token
 from .alignment import schema as alignment_schema, validate_alignment
@@ -98,12 +99,11 @@ def serialize_char(c, user):
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
         d = a.data
-        hit_bonus = calc['hit'] + (calc['weapon_hit'] if d.get('weapon') else 0) + sum(int(e.get('value', 0)) for e in calc['effects']
-                    if e.get('keyword') and e['keyword'] in d.get('keywords', []) and e.get('stat') == 'hit')
+        hit_bonus = enchantments.ability_bonus(calc,a,'hit') + sum(p.get('hit',0) for p in enchantments.for_ability(calc,a)) + (calc['weapon_hit'] if d.get('weapon') else 0)
         if d.get('system') and any(x.name=='Мистическая точность' for x in c.abilities.all()):
             hit_bonus += calc['mods'][calc['primary']]
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
-                          'hit_bonus': hit_bonus,
+                          'hit_bonus': hit_bonus, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
                           'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, True, calc,scene=scene),
@@ -151,7 +151,7 @@ def state(request):
                         'master': master(request.user)}, 'users': list(User.objects.values('id', 'username')) if master(request.user) else [],
                         'characters': [serialize_char(c, request.user)
                         for c in Character.objects.select_related('owner').prefetch_related('abilities', 'items', 'memberships')],
-                        'rules': {'alignment':alignment_schema(), 'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
+                        'rules': {'enchantments':enchantments.catalogue(), 'alignment':alignment_schema(), 'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
                         'campaigns': campaigns, 'sessions': sessions, 'scenes': scenes, 'events': visible_events,
                         'catalog': list(Entry.objects.filter(archived=False).values('id', 'kind', 'name', 'description', 'data', 'source'))})
 
@@ -370,12 +370,26 @@ def execute(user, p):
             raise ValueError('В сессии нет персонажей')
         if any(current_scene(c) for c in chars):
             raise ValueError('Персонаж уже участвует в активном бою')
-        order = [c.id for c in sorted(chars, key=lambda c: bounded(p.get('initiative', {}).get(str(c.id), 0), -1000, 1000), reverse=True)]
-        scene = Scene.objects.create(session=session, state={'active': False, 'order': order, 'turn': 0, 'round': 1})
-        change = Change(user, 'Начало боя · ' + session.name, scene)
+        if 'roll_pool' in p:
+            pool=p['roll_pool']; assigned=p.get('assigned_rolls',{})
+            if not isinstance(pool,list) or len(pool)!=len(chars):
+                raise ValueError('Введите один результат 2к6 для каждого участника')
+            if any(type(v) is not int or not 2<=v<=12 for v in pool):
+                raise ValueError('Результат 2к6 должен быть от 2 до 12')
+            indices=[assigned.get(str(c.id)) for c in chars]
+            if any(type(i) is not int for i in indices) or sorted(indices)!=list(range(len(chars))):
+                raise ValueError('Каждый бросок должен достаться ровно одному персонажу')
+            initiatives={str(c.id):pool[assigned[str(c.id)]]+computed(c)['initiative'] for c in chars}
+        else:
+            # Backward-compatible API for an explicitly supplied final total.
+            initiatives={str(c.id):bounded(p.get('initiative',{}).get(str(c.id),0),-1000,1000) for c in chars}
+        order=[c.id for c in sorted(chars,key=lambda c:initiatives[str(c.id)],reverse=True)]
+        scene = Scene.objects.create(session=session, state={'active': False, 'order': order, 'turn': 0, 'round': 1, 'initiative':initiatives})
+        change = Change(user, 'Начало боя · ' + session.name, scene, inputs={'roll_pool':p.get('roll_pool'), 'assigned_rolls':p.get('assigned_rolls'), 'initiative':initiatives})
         change.watch(scene).state['active'] = True
         for c in chars:
             change.watch(c)
+            enchantments.start_battle(c,computed(c))
             c.runtime.update(used={}, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
                              stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
         change.finish()
@@ -400,7 +414,7 @@ def execute(user, p):
         if op == 'scene.end':
             scene.state['active'] = False
             for c in chars.values():
-                c.runtime.update(effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
+                c.runtime.update(enchantment_uses={},effects=[], used={}, temp=0, stun_pending=0, actions=dict(ACTIONS))
                 c.runtime['hp'] = computed(c)['max_hp']
         else:
             c = chars[current.id]
@@ -448,6 +462,8 @@ def execute(user, p):
             c.runtime['temp'] = value
         else:
             c.runtime['hp'] = min(computed(c)['max_hp'], value)
+        if current_scene(c) and c.runtime['hp']<hp:
+            change.inputs['enchantment_heal']=enchantments.restore_first_loss(c,computed(c),hp-c.runtime['hp'])
         change.finish()
     elif op in ['ability.use', 'aura.set']:
         use_ability(user, p)
@@ -478,13 +494,35 @@ def execute(user, p):
         Change(user,'Проверка '+skill+' · '+c.name,current_scene(c),
                inputs={'roll_result':str(roll),'bonus':bonus,'total':roll+bonus,'specialization':str(p.get('specialization',''))[:160]}).finish(record=True)
         return {'total':roll+bonus,'bonus':bonus}
-    elif op == 'weapon.select':
+    elif op == 'enchantment.kill':
+        c=owned(user,p['character'])
+        scene=current_scene(c)
+        if not scene: raise ValueError('Персонаж вне боя')
+        if c.runtime.get('enchantment_uses',{}).get('first_kill'):
+            raise ValueError('Первое убийство уже отмечено в этом бою')
+        change=Change(user,'Первый поверженный противник · '+c.name,scene)
+        change.watch(c)
+        calc=computed(c)
+        heal=max((e.get('first_kill_heal',0) for e in calc['enchantments']),default=0)
+        c.runtime.setdefault('enchantment_uses',{})['first_kill']=True
+        c.runtime['hp']=min(calc['max_hp'],c.runtime.get('hp',0)+heal)
+        change.inputs['fixed_heal']=heal
+        change.finish()
+    elif op == 'enchantment.learn':
+        c=owned(user,p['character'])
+        e=get_object_or_404(Entry,pk=p['entry'],archived=False)
+        if not enchantments.profile(e): raise ValueError('Выберите зачарование')
+        if p.get('remove'): c.abilities.remove(e)
+        else: c.abilities.add(e)
+        c.revision+=1;c.save(update_fields=['revision'])
+    elif op in ['weapon.select','focus.select']:
         c = owned(user,p['character'])
-        weapon = get_object_or_404(Item,pk=p['item'],character=c,equipped=True) if p.get('item') else None
-        if weapon and not weapon.data.get('dice'):
+        weapon = get_object_or_404(Item,pk=p['item'],character=c,equipped=True,quantity__gt=0) if p.get('item') else None
+        is_focus=op=='focus.select'
+        if weapon and (weapon.data.get('item_type')!='focus' if is_focus else not weapon.data.get('dice')):
             raise ValueError('Выберите оружие')
-        change = Change(user,'Выбор оружия · '+c.name,current_scene(c))
-        change.watch(c).runtime['weapon_id'] = weapon.id if weapon else 0
+        change = Change(user,('Выбор фокусировки · ' if is_focus else 'Выбор оружия · ')+c.name,current_scene(c))
+        change.watch(c).runtime['focus_id' if is_focus else 'weapon_id'] = weapon.id if weapon else 0
         change.finish()
     elif op == 'action.spend':
         c = owned(user, p['character'])
@@ -519,6 +557,7 @@ def execute(user, p):
 
 
 def validate_entry(d):
+    enchantments.validate_profile(d)
     if not isinstance(d,dict):
         raise ValueError('Параметры должны быть объектом')
     for key in ['formula', 'dice', 'stat', 'source_name']:
@@ -561,6 +600,7 @@ def item_action(user, p):
     if op in ['item.delete','item.transfer'] and item.character_id and current_scene(item.character):
         raise ValueError('Передача и удаление предметов доступны после боя. В бою используйте надевание/снятие.')
     if op == 'item.equip':
+        if not item.equipped and item.quantity<1: raise ValueError('Нет предмета в наличии')
         if item.data.get('item_type') in ['currency','consumable']:
             raise ValueError('Этот предмет нельзя надеть')
         if not item.character_id:
@@ -619,11 +659,12 @@ def item_action(user, p):
             raise ValueError('Некорректные свойства')
         validate_entry(data)
         item_type=data.get('item_type','other')
-        if item_type not in ['weapon','armor','shield','consumable','currency','other']:
+        if item_type not in ['weapon','focus','armor','shield','consumable','currency','other']:
             raise ValueError('Неизвестный тип предмета')
         if item_type=='currency':
             item.name='Золото';item.equipped=False;item.slot='';data={'item_type':'currency'}
-        if item_type=='consumable':item.equipped=False
+        if item_type=='consumable' or item.quantity==0:item.equipped=False
+        enchantments.validate(data)
         if item_type=='weapon' and data.get('dice'):
             import re
             if not re.fullmatch(r'[1-9]\d{0,2}[кd][1-9]\d{0,2}',data['dice']):
@@ -685,6 +726,12 @@ def use_ability(user, p):
     if p.get('outcome') != 'miss' or aura:
         for pk in ids:
             t = change.watch(targets[pk])
+            if not aura:
+                for charm in enchantments.for_ability(computed(c),a):
+                    if charm.get('slow') and d.get('damage'):
+                        apply_status(t,{'key':'status:Замедление','name':'Замедление','status':'Замедление',
+                                        'stat':'speed','value':-charm['slow'],'duration':'turns','remaining':3,
+                                        'source':c.name+' · '+charm['name'],'source_id':c.id})
             for index, e in enumerate(d.get('effects', [])):
                 if e.get('manual'):
                     continue
