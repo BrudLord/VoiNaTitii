@@ -543,7 +543,7 @@ def execute(user, p):
         if p.get('remove'):
             c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if e.get('key')!=p.get('effect_key')]
         else:
-            apply_status(c,effect,p.get('reaction'))
+            apply_status(c,effect,p.get('reaction'),change=change,roll=p.get('reaction_roll'))
         change.finish()
     elif op == 'check.roll':
         c=owned(user,p['character'])
@@ -848,7 +848,7 @@ def use_ability(user, p, embedded=False):
                     if aura:
                         put_effect(t,effect)
                     else:
-                        apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'))
+                        apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'),change=change,roll=p.get('reaction_rolls',{}).get(f'{pk}:{index}'))
     if not aura:seeking_arrows.record(change,c,a,scene,computed(c),p,ids)
     charged_arrows.apply(change,c,a,targets,charged,p)
     prepared_attacks.apply(change,c,a,targets,setup)

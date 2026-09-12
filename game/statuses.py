@@ -34,7 +34,7 @@ def reaction_options(target, incoming):
     return options
 
 
-def apply_status(target, incoming, choice=None):
+def apply_status(target, incoming, choice=None, *, change=None, roll=None):
     from .rules import put_effect
     name=status_name(incoming)
     options=reaction_options(target,incoming)
@@ -43,6 +43,20 @@ def apply_status(target, incoming, choice=None):
         if not selected: raise ValueError('Выберите стихийную реакцию для '+target.name)
         old=selected['effect'];result=selected['name']
         strength=abs(old['value'])+abs(incoming['value'])
+        if result in ['Взрыв','Проклятый разряд','Ледяная тьма']:
+            damage=strength
+            if result=='Проклятый разряд':
+                if isinstance(roll,bool) or not re.fullmatch(r'\d+',str(roll) if roll is not None else '') or not strength<=int(roll)<=strength*6:
+                    raise ValueError(f'Введите итог физического броска {strength}к6 для Проклятого разряда ({strength}–{strength*6})')
+                damage=int(roll)
+            if change is None:raise ValueError('Мгновенная реакция должна быть записана в журнал действия')
+            change.inputs.setdefault('instant_reactions',[]).append({'name':result,'target':target.name,'target_id':target.pk,
+                'strength':strength,'damage':damage,'damage_type':'Физический' if result=='Взрыв' else '', 'area':2 if result=='Взрыв' else 0,
+                'ignore_resistance':result=='Проклятый разряд','roll':damage if result=='Проклятый разряд' else None,
+                'source':incoming.get('source',''),'source_id':incoming.get('source_id'),
+                'temp_hp':strength*2 if result=='Ледяная тьма' else 0})
+            target.runtime['effects'].remove(old)
+            return
         target.runtime['effects'].remove(old)
         if result=='Нейтрализация': return
         if result=='Насыщение':

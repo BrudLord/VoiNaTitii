@@ -26,5 +26,5 @@ async function submitAbility(payload){
  }
  return api(payload);
 }
-function weavingLog(value){if(!value)return '';if(value.prepared)return '<br>Мистическое плетение подготовлено';if(!value.spell)return '<br>Плетение завершено без магического умения';const p=value.inputs||{};return '<br><strong>'+esc('Плетение · '+value.spell)+'</strong>'+(p.roll_result?'<br>Бросок: '+esc(p.roll_result):'')+attackTargetLog(p.attack_targets)+rollPoolLog(p.roll_pool)+chargedLog(p.charged_arrows)}
+function weavingLog(value){if(!value)return '';if(value.prepared)return '<br>Мистическое плетение подготовлено';if(!value.spell)return '<br>Плетение завершено без магического умения';const p=value.inputs||{};return '<br><strong>'+esc('Плетение · '+value.spell)+'</strong>'+(p.roll_result?'<br>Бросок: '+esc(p.roll_result):'')+instantReactionLog(p.instant_reactions)+attackTargetLog(p.attack_targets)+rollPoolLog(p.roll_pool)+chargedLog(p.charged_arrows)}
 document.addEventListener('change',e=>{if(e.target.name==='weave_ability')el('dialog-submit').textContent=e.target.value?'Далее: заклинание':'Применить'});

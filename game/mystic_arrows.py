@@ -79,4 +79,4 @@ def apply(change, character, targets, choices, payload, *, count_use=True, log_k
             effect=option['effect']
             apply_status(change.watch(target),{**effect,'key':'status:'+effect['status'],'name':effect['status'],
                 'duration':effect.get('duration','turns'),'remaining':effect.get('turns',0),'source':character.name+' · '+option['name'],
-                'source_id':character.id},payload.get('reactions',{}).get(f"{target.id}:arrow:{option['id']}"))
+                'source_id':character.id},payload.get('reactions',{}).get(f"{target.id}:arrow:{option['id']}"),change=change,roll=payload.get('reaction_rolls',{}).get(f"{target.id}:arrow:{option['id']}"))

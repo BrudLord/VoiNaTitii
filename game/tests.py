@@ -2487,3 +2487,47 @@ class GameTests(TestCase):
         self.assertEqual(row['conductor_damage'],4)
         self.b.refresh_from_db();self.assertEqual(self.b.runtime['hp'],10)
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+
+    def instant_reaction_setup(self,old_name,new_name):
+        scene=self.start();self.b.refresh_from_db()
+        from .statuses import STATUS
+        stat,sign=STATUS[old_name]
+        self.b.runtime['effects']=[{'key':'old','name':old_name,'stat':stat,'value':sign*2,'duration':'turns','remaining':2}];self.b.save()
+        stat,sign=STATUS[new_name]
+        ability=Entry.objects.create(kind='ability',name='Реакция',data={'category':'active','action':'main','circle':0,'rolls':False,'effects':[{'name':new_name,'stat':stat,'value':sign*3}]})
+        self.a.abilities.add(ability)
+        return {'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.b.pk],'reactions':{f'{self.b.pk}:0':'old'}}
+
+    def test_cursed_discharge_waits_for_roll_and_resolves_once_with_undo(self):
+        p=self.instant_reaction_setup('Проклятье','Шок')
+        count=Event.objects.count()
+        for value in [None,'',4,31,True,'3.5']:
+            self.post(self.alice,{**p,'reaction_rolls':{f'{self.b.pk}:0':value}},400)
+            self.assertEqual(Event.objects.count(),count)
+            self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['key'],'old')
+        self.post(self.alice,{**p,'reaction_rolls':{f'{self.b.pk}:0':'18'}})
+        row=Event.objects.latest('id').inputs['instant_reactions'][0]
+        self.assertEqual((row['name'],row['strength'],row['damage'],row['ignore_resistance']),('Проклятый разряд',5,18,True))
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[]);self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['key'],'old')
+        self.post(self.alice,{'op':'redo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_explosion_is_instant_and_records_physical_area_damage(self):
+        p=self.instant_reaction_setup('Влага','Кислота');self.post(self.alice,p)
+        row=Event.objects.latest('id').inputs['instant_reactions'][0]
+        self.assertEqual((row['name'],row['damage'],row['area']),('Взрыв',5,2))
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[]);self.assertEqual(self.b.runtime['hp'],10)
+
+    def test_icy_darkness_records_source_temp_hp_without_automatic_hp_changes(self):
+        p=self.instant_reaction_setup('Проклятье','Мороз');self.post(self.alice,p)
+        row=Event.objects.latest('id').inputs['instant_reactions'][0]
+        self.assertEqual((row['name'],row['damage'],row['temp_hp'],row['source_id']),('Ледяная тьма',5,10,self.a.pk))
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.b.runtime['effects'],[]);self.assertEqual(self.a.runtime['temp'],0)
+
+    def test_manual_cursed_discharge_uses_the_same_roll_validation(self):
+        self.instant_reaction_setup('Проклятье','Шок')
+        p={'op':'effect.apply','character':self.b.pk,'name':'Шок','value':3,'reaction':'old','source_id':self.a.pk}
+        self.post(self.gm,p,400)
+        self.post(self.gm,{**p,'reaction_roll':'21'})
+        self.assertEqual(Event.objects.latest('id').inputs['instant_reactions'][0]['damage'],21)
