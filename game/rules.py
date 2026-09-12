@@ -24,7 +24,7 @@ def computed(c):
     selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
     from .enchantments import equipment
     enchantments, focus_id = equipment(c, equipped, selected)
-    from .weaponry import upgrades, versatile, held_keywords, reload_action
+    from .weaponry import upgrades, versatile, held_keywords, reload_action, offhand_penalty
     from .passives import lightning_reflexes
     from .stances import mode, learned as stance_learned
     support=mode(c);support_mastery=stance_learned(c,'Стихийное превосходство')
@@ -90,7 +90,7 @@ def computed(c):
             crit += int(item.data.get('crit', 0))
             weapon_item = item.id
             weapon_proficient = bool(item.data.get('no_proficiency') or trained.intersection(item.data.get('families',item.data.get('keywords',[]))))
-            weapon_hit = int(item.data.get('hit',0))
+            weapon_hit = int(item.data.get('hit',0)) + offhand_penalty(item.data)
     elf_element=definition(c.info.get('elf_element'))
     if rd.get('element_damage') and elf_element:
         effects.append({'stat':'damage','value':rd['element_damage'],'keyword':elf_element.name})
@@ -124,6 +124,8 @@ def computed(c):
             'armored_hit':sum(p.get('armored_hit',0) for p in weapon_upgrades),
             'attack_mode':c.runtime.get('attack_mode','melee'),
             'weapon_stat': weapon_school, 'weapon': weapon, 'crit': crit,
+            'weapon_hand':selected.data.get('hand','main') if selected else 'main',
+            'offhand_penalty':offhand_penalty(selected.data) if selected else 0,
             'weapon_id':weapon_item,'weapon_proficient':weapon_proficient,'weapon_hit':weapon_hit,
             'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
             'support':support,'support_mastery':support_mastery,

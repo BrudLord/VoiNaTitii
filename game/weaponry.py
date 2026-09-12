@@ -58,6 +58,7 @@ def effective(character,ability,calc=None):
 
 
 def validate(data):
+    if data.get('hand','main') not in ['main','off']:raise ValueError('Выберите основную или вторую руку')
     from types import SimpleNamespace
     ids=data.get('upgrades',[])
     if not isinstance(ids,list) or any(type(i) is not int for i in ids) or len(ids)>30 or len(set(ids))!=len(ids):raise ValueError('Выберите разные улучшения оружия')
@@ -153,3 +154,7 @@ def validate_wide_swing(data):
         raise ValueError('Укажите бонус попадания и досягаемость Широкого замаха')
     if type(profile['hit']) is not int or not -1000<=profile['hit']<=1000 or type(profile['reach']) is not int or not 0<=profile['reach']<=100:
         raise ValueError('Некорректные параметры Широкого замаха')
+
+
+def offhand_penalty(data):
+    return -4 if data.get('hand')=='off' and not set(data.get('keywords',[])).intersection({'Лёгкое','Легкое'}) else 0

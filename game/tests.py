@@ -3087,3 +3087,38 @@ class GameTests(TestCase):
         self.assertEqual(len(Event.objects.latest('id').inputs['dispersions']),2)
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
         self.assertEqual(self.a.runtime['effects'],[])
+
+    def test_offhand_penalty_only_affects_attacks_with_selected_nonlight_weapon(self):
+        from .targeting import hit_bonus
+        heavy=Item.objects.create(character=self.a,name='Топор во второй руке',equipped=True,data={'item_type':'weapon','dice':'1к6','no_proficiency':True,'stat':'cha','hand':'off','hit':1})
+        light=Item.objects.create(character=self.a,name='Кинжал',equipped=True,data={'item_type':'weapon','dice':'1к4','no_proficiency':True,'stat':'cha','hand':'off','keywords':['Лёгкое']})
+        attack=Entry.objects.create(kind='ability',name='Удар',data={'weapon':True,'damage':True,'formula':'1Ор+Мод'})
+        spell=Entry.objects.create(kind='ability',name='Заклинание',data={'damage':True,'formula':'1к6+Мод'})
+        self.a.runtime['weapon_id']=heavy.id
+        calc=computed(self.a)
+        self.assertEqual(calc['offhand_penalty'],-4)
+        self.assertEqual(hit_bonus(self.a,attack,calc),-3)
+        self.assertEqual(hit_bonus(self.a,spell,calc),0)
+        self.assertEqual(formula(self.a,attack),'1к6+3')
+        self.a.runtime['weapon_id']=light.id
+        self.assertEqual(hit_bonus(self.a,attack,computed(self.a)),0)
+        self.a.runtime['weapon_id']=0
+        self.assertEqual(computed(self.a)['offhand_penalty'],0)
+
+    def test_weapon_hand_edit_validation_and_undo(self):
+        item=Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6'})
+        p={'op':'item.save','id':item.pk,'name':item.name,'equipped':True,'data':{**item.data,'hand':'off'}}
+        self.post(self.alice,{**p,'data':{**p['data'],'hand':'invalid'}},400)
+        self.post(self.alice,p);self.assertEqual(computed(self.a)['offhand_penalty'],-4)
+        self.post(self.alice,{'op':'undo'});self.assertEqual(computed(self.a)['offhand_penalty'],0)
+        self.post(self.alice,{'op':'redo'});self.assertEqual(computed(self.a)['offhand_penalty'],-4)
+
+    def test_offhand_penalty_is_recorded_in_attack_and_disappears_with_weapon_change(self):
+        weapon=Item.objects.create(character=self.a,name='Топор',equipped=True,data={'item_type':'weapon','dice':'1к6','hand':'off','no_proficiency':True})
+        ability=Entry.objects.create(kind='ability',name='Атака',data={'weapon':True,'damage':True,'formula':'1Ор','circle':0,'action':'main','rolls':True})
+        self.a.abilities.add(ability);self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.b.pk],'outcome':'hit','roll_result':'Попадание 16, урон 4'})
+        self.assertEqual(Event.objects.latest('id').inputs['attack_targets'][0]['hit'],-4)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{'op':'weapon.select','character':self.a.pk,'item':0})
+        self.a.refresh_from_db();self.assertEqual(computed(self.a)['offhand_penalty'],0)
