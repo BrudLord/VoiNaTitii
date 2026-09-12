@@ -2531,3 +2531,14 @@ class GameTests(TestCase):
         self.post(self.gm,p,400)
         self.post(self.gm,{**p,'reaction_roll':'21'})
         self.assertEqual(Event.objects.latest('id').inputs['instant_reactions'][0]['damage'],21)
+
+    def test_multiple_effects_react_in_order_and_capture_combined_strength(self):
+        scene=self.start()
+        ability=Entry.objects.create(kind='ability',name='Два эффекта',data={'category':'active','action':'main','circle':0,'rolls':False,'effects':[{'name':'Влага','stat':'status','value':2},{'name':'Шок','stat':'status','value':3}]})
+        self.a.abilities.add(ability)
+        p={'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.b.pk]}
+        self.post(self.alice,p,400)
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+        self.post(self.alice,{**p,'reactions':{f'{self.b.pk}:1':'status:Влага'}})
+        self.b.refresh_from_db();self.assertEqual([(e['status'],e['value']) for e in self.b.runtime['effects']],[('Оцепенение',5)])
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])

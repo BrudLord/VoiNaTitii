@@ -12,7 +12,7 @@ def payload():
     fields=['id','kind','name','description','data','source']
     result={'catalog':[{key:getattr(e,key) for key in fields} for e in entries],
             'rules':{'crafting':crafting.catalogue(entries),'enchantments':enchantments.catalogue(entries),
-                     'alignment':schema(),'statuses':list(STATUS),'neutral':NEUTRAL,'constructive':CONSTRUCTIVE}}
+                     'alignment':schema(),'statuses':list(STATUS),'status_profiles':STATUS,'neutral':NEUTRAL,'constructive':CONSTRUCTIVE}}
     encoded=json.dumps(result,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
     result['catalog_revision']=hashlib.sha256(encoded).hexdigest()
     return result
