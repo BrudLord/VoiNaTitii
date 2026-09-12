@@ -34,7 +34,8 @@ def computed(c):
     effects.extend({'stat':'speed','value':p['speed']} for p in enchantments if p.get('speed'))
     effects.extend({**e,**({'ability_scope':'weapon' if i.data.get('dice') else 'focus'} if (i.data.get('dice') or i.data.get('item_type')=='focus') and e.get('stat') in ['hit','damage'] else {})} for i in equipped for e in i.data.get('effects',[])
                    if not ((i.data.get('dice') and i!=selected or i.data.get('item_type')=='focus' and i.id!=focus_id) and e.get('stat') in ['hit','damage']))
-    for ability in c.abilities.all():
+    learned = [a for a in c.abilities.all() if not a.archived]
+    for ability in learned:
         if ability.data.get('category') == 'passive' and not ability.data.get('aura') and not ability.data.get('manual'):
             effects.extend(e for e in ability.data.get('effects', []) if not e.get('manual'))
     for e in effects:
@@ -60,6 +61,8 @@ def computed(c):
     crit = sum(p.get('crit',0) for p in weapon_upgrades)
     school_ids = [c.info.get('school_id'),c.info.get('secondary_school_id')] + c.info.get('additional_school_ids',[])
     trained = {e.name for e in Entry.objects.filter(pk__in=[x for x in school_ids if str(x).isdigit()],kind='school')}
+    if any(a.name == 'Интуитивное владение' for a in learned):
+        trained.add('Луки')
     for item in equipped:
         if item.data.get('item_type') in ['armor','shield'] or not item.data.get('item_type'):
             armor += int(item.data.get('armor', 0))
@@ -82,7 +85,7 @@ def computed(c):
     for e in effects:
         if not e.get('keyword') and e.get('stat') in bonuses:
             bonuses[e['stat']] += e.get('value', 0)
-    passive_hp = sum(int(a.data.get('passive_hp',0)) for a in c.abilities.all())
+    passive_hp = sum(int(a.data.get('passive_hp',0)) for a in learned)
     extra_hp = int(rd.get('hp_bonus',0)) + passive_hp + sum(e.get('value',0) for e in effects if e.get('stat')=='max_hp')
     max_hp = max(1, extra_hp + int(kd.get('hp_base', 18)) + stats['con'] +
                  (c.level - 1) * (int(kd.get('hp_level', 4)) + mods['con']))

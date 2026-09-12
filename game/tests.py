@@ -7,6 +7,49 @@ from .rules import fresh, computed, formula
 
 
 class GameTests(TestCase):
+    def test_archived_passives_stop_affecting_sheet_and_attacks(self):
+        from .views import serialize_char
+        vigor=Entry.objects.create(kind='ability',name='Живучесть',data={'category':'passive','passive_hp':10,
+            'effects':[{'stat':'dex','value':2},{'stat':'ac','value':1}]})
+        boulder=Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive','stat':'cha'})
+        accuracy=Entry.objects.create(kind='ability',name='Мистическая точность',data={'category':'passive'})
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор + Мод','keywords':['Ближний 1']})
+        Item.objects.create(character=self.a,name='Клинок',equipped=True,data={'dice':'1к6','item_type':'weapon','no_proficiency':True})
+        self.a.abilities.add(vigor,boulder,accuracy)
+        initial=serialize_char(self.a,self.alice)
+        self.assertEqual((initial['calc']['stats']['dex'],initial['calc']['ac'],initial['calc']['max_hp']),(12,7,38))
+        row=next(a for a in initial['abilities'] if a['id']==attack.id)
+        self.assertEqual(row['hit_bonus'],3)
+        self.assertIn('+3 [Земля]',row['formula'])
+        for passive in (vigor,boulder,accuracy):
+            self.post(self.gm,{'op':'entry.save','id':passive.id,'archive':True})
+        final=serialize_char(Character.objects.get(pk=self.a.pk),self.alice)
+        self.assertEqual((final['calc']['stats']['dex'],final['calc']['ac'],final['calc']['max_hp']),(10,5,28))
+        row=next(a for a in final['abilities'] if a['id']==attack.id)
+        self.assertEqual(row['hit_bonus'],0)
+        self.assertNotIn('[Земля]',row['formula'])
+        self.assertFalse({vigor.id,boulder.id,accuracy.id}.intersection(a['id'] for a in final['abilities']))
+
+    def test_intuitive_bow_proficiency_uses_bow_modifier_and_can_be_removed(self):
+        from .views import serialize_char
+        Entry.objects.create(kind='school',name='Луки',data={'stat':'dex'})
+        passive=Entry.objects.create(kind='ability',name='Интуитивное владение',data={'category':'passive'})
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор + Мод'})
+        Item.objects.create(character=self.a,name='Лук',equipped=True,data={'dice':'1к6','item_type':'weapon','families':['Луки'],'stat':'dex'})
+        self.a.stats['dex']=14;self.a.save()
+        self.assertFalse(computed(self.a)['weapon_proficient'])
+        self.assertEqual(formula(self.a,attack),'1к6 + 0')
+        self.a.abilities.add(passive)
+        self.assertTrue(computed(self.a)['weapon_proficient'])
+        self.assertEqual(formula(self.a,attack),'1к6 + 2')
+        self.assertEqual(self.a.info['school_id'],self.school.pk)
+        rendered=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==passive.id)
+        self.assertFalse(rendered['data']['manual'])
+        self.a.abilities.remove(passive)
+        self.assertEqual(formula(self.a,attack),'1к6 + 0')
+        self.a.abilities.add(passive);passive.archived=True;passive.save()
+        self.assertFalse(computed(self.a)['weapon_proficient'])
+
     def setUp(self):
         self.gm = User.objects.create_superuser('admin', password='test-admin-password')
         self.alice = User.objects.create_user('alice', password='testing123')

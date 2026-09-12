@@ -27,7 +27,7 @@ def records(text):
         for m in re.finditer(r'^#### ([^\n]+)\n(.*?)(?=^#### |\Z)',body,re.M|re.S):
             bonus = re.search(r'получают \+1 к \*\*([^*]+)', m[2])
             if bonus: subrace_traits[m[1].strip()] = {'stat': STAT_NAMES.get(bonus[1]), 'value':1}
-        data={'subrace_traits':subrace_traits,'hp_bonus':5 if name=='Гном' else 0,'ac_bonus':1 if name=='Людоящер' else 0,
+        data={'subrace_traits':subrace_traits,'chosen_stat_bonus':1 if name=='Человек' else 0,'hp_bonus':5 if name=='Гном' else 0,'ac_bonus':1 if name=='Людоящер' else 0,
               'element_damage':1 if name=='Эльф' else 0,'step':2 if name=='Туват' else 1,'resistance':1 if name=='Отродье' else 0}
         yield 'race',name,None,data
     for name, body in chapters(text,3):

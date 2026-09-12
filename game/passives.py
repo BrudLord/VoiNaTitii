@@ -7,7 +7,7 @@ def turn_token(scene):
 
 
 def boulder_bonus(character, ability, calc, scene):
-    passive=next((a for a in character.abilities.all() if a.name=='Глыба'),None)
+    passive=next((a for a in character.abilities.all() if a.name=='Глыба' and not a.archived),None)
     if not passive or ability.data.get('category','active')!='active':return []
     data=ability.data
     result=[]

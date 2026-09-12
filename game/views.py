@@ -95,16 +95,16 @@ def serialize_char(c, user):
     scene = current_scene(c)
     abilities = []
     calc = computed(c)
-    learned = {a.id:a for a in c.abilities.all()}
+    learned = {a.id:a for a in c.abilities.all() if not a.archived}
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
         d = copy.deepcopy(a.data)
-        if roll_pools.profile(a) or crafting.profile(a) or a.name=='Молниеносные рефлексы':d['manual']=False
+        if roll_pools.profile(a) or crafting.profile(a) or a.name in ['Молниеносные рефлексы','Интуитивное владение','Мистическая точность']:d['manual']=False
         d['keywords']=weaponry.keywords(a,calc)
         if d.get('weapon'):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
         hit_bonus = enchantments.ability_bonus(calc,a,'hit') + sum(p.get('hit',0) for p in enchantments.for_ability(calc,a)) + (calc['weapon_hit'] if d.get('weapon') else 0)
-        if d.get('system') and any(x.name=='Мистическая точность' for x in c.abilities.all()):
+        if d.get('system') and any(x.name=='Мистическая точность' for x in learned.values()):
             hit_bonus += calc['mods'][calc['primary']]
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),

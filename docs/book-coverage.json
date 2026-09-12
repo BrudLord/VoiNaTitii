@@ -6968,7 +6968,9 @@
         "source_group",
         "source_name"
       ],
-      "candidate_handlers": [],
+      "candidate_handlers": [
+        "game.views.serialize_char: standard attack hit"
+      ],
       "verification": "needs_scenario_review"
     },
     {
@@ -6999,7 +7001,9 @@
         "source_group",
         "source_name"
       ],
-      "candidate_handlers": [],
+      "candidate_handlers": [
+        "game.rules.computed: bow proficiency"
+      ],
       "verification": "needs_scenario_review"
     },
     {

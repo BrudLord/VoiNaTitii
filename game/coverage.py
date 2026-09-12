@@ -50,6 +50,8 @@ def inventory(text):
         if title in ALCHEMY:handlers.append('game.crafting: production')
         if title=='Масло точности':handlers.append('game.alchemy.apply_oil')
         if title=='Глыба':handlers.append('game.passives.boulder_bonus')
+        if title=='Интуитивное владение':handlers.append('game.rules.computed: bow proficiency')
+        if title=='Мистическая точность':handlers.append('game.views.serialize_char: standard attack hit')
         if title=='Молниеносные рефлексы':handlers.extend(['game.passives.reflex_reason','game.rules.computed: reactions'])
         if title=='Отложить действие':handlers.append('game.readied')
         result.append({'id':f'book:{line}','kind':kind,'title':title,'chapter':chapter,
