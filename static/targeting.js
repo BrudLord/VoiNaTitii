@@ -21,7 +21,7 @@ function targetDamageFormula(a,target){
  const conductor=strength*(a.physical_weapon_units||0)/2;
  if(conductor)result+=' +'+conductor+' [Сверхпроводник]';
  if(a.data.damage_from_bp&&bp)result+=' +'+bp+' [БП]';
- if(formObject().outcome==='miss')return result;
+ if(formObject().outcome==='miss')return a.data.miss_damage_divisor?'('+result+') / '+a.data.miss_damage_divisor:'0';
  const choices=(a.mystic_arrows?.options||[]).filter(o=>mysticArrowPayload().mystic_arrows.includes(o.id));
  if((target?.id||0)===Number(chargedArrowPayload().charged_target||0))choices.push(...selectedChargedArrows(a));
  for(const o of choices)if(o.damage_contribution)result+=' +'+o.damage_contribution.value+' ['+o.damage_contribution.type+']';
@@ -31,11 +31,12 @@ function attackTargetPreview(a){
  const ids=checks('targets'),sign=n=>(n>=0?'+':'')+n;
  return (ids.length?ids.map(id=>byId(S.characters,id)):[null]).map(t=>{
  const bonus=t?targetHitBonus(a,t):Number(formObject().external_bp||0)+(formObject().external_prone&&(a.data.keywords||[]).some(w=>/^Ближний(?:\s|$)/.test(w))?2:0),penalty=markPenalty(),total=a.hit_bonus+bonus+penalty;
- if(a.data.automatic_hit)return `<div>${esc(t?t.name:'Цель на игровом поле')}: <strong>автоматическое попадание</strong><br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong>${forcedMovementPreview(a,t)}</div>`;
- return `<div>${(a.roll_conditions||[]).length?'<strong>'+esc(a.roll_conditions.join(' · '))+'</strong><br>':''}${esc(t?t.name:'Цель на игровом поле')}: попадание <strong>${sign(total)}</strong>${penalty?' (метка −3)':''}${bonus?' (бонус цели '+sign(bonus)+')':''}${a.armored_hit_bonus!=null?' · по броне '+sign(a.armored_hit_bonus+bonus+penalty):''}<br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong>${forcedMovementPreview(a,t)}</div>`;
+ if(formObject().outcome==='miss')return `<div>${esc(t?t.name:'Цель на игровом поле')}: <strong>промах</strong><br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong>${missDamageField(a,t)}</div>`;
+ if(a.data.automatic_hit)return `<div>${esc(t?t.name:'Цель на игровом поле')}: <strong>автоматическое попадание</strong><br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong>${missDamageField(a,t)}${forcedMovementPreview(a,t)}</div>`;
+ return `<div>${(a.roll_conditions||[]).length?'<strong>'+esc(a.roll_conditions.join(' · '))+'</strong><br>':''}${esc(t?t.name:'Цель на игровом поле')}: попадание <strong>${sign(total)}</strong>${penalty?' (метка −3)':''}${bonus?' (бонус цели '+sign(bonus)+')':''}${a.armored_hit_bonus!=null?' · по броне '+sign(a.armored_hit_bonus+bonus+penalty):''}<br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong>${missDamageField(a,t)}${forcedMovementPreview(a,t)}</div>`;
  }).join('');
 }
-function attackTargetLog(rows){return (rows||[]).map(r=>'<br>'+esc(r.name+(r.automatic_hit?': автоматическое попадание':': попадание '+(r.hit>=0?'+':'')+r.hit)+(r.mark_penalty?' · метка '+r.mark_penalty:'')+(r.target_bonus?' · бонус цели '+r.target_bonus:'')+(r.armored_hit!=null?' · по броне '+r.armored_hit:'')+(r.damage?' · формула '+r.damage:'')+(r.roll_conditions?.length?' · '+r.roll_conditions.join(' · '):''))).join('')}
+function attackTargetLog(rows){return (rows||[]).map(r=>'<br>'+esc(r.name+(r.outcome==='miss'?': промах':r.automatic_hit?': автоматическое попадание':': попадание '+(r.hit>=0?'+':'')+r.hit)+(r.mark_penalty?' · метка '+r.mark_penalty:'')+(r.target_bonus?' · бонус цели '+r.target_bonus:'')+(r.armored_hit!=null?' · по броне '+r.armored_hit:'')+(r.damage?' · формула '+r.damage:'')+(r.miss_damage?' · урон '+r.miss_damage.incoming+' ÷ '+r.miss_damage.divisor+' = '+r.miss_damage.remaining.toLocaleString('ru'):'')+(r.roll_conditions?.length?' · '+r.roll_conditions.join(' · '):''))).join('')}
 document.addEventListener('input',e=>{if(['external_bp','external_prone','external_conductor','mark_source_included'].includes(e.target.name))updateAttackPreview()});
 
 function forcedMovementPreview(a,target){
@@ -46,3 +47,7 @@ function forcedMovementPreview(a,target){
  for(const o of choices){if(o.movement)lines.push(blocked?'Сдвиг невозможен: Обездвижен':'Сдвиг '+Math.max(0,o.movement-(target.calc.forced_movement_reduction||0))+' клеток');if((o.effect?.status||o.effect?.name)==='Обездвижен')blocked=true}
  return lines.length?'<br>'+lines.map(esc).join(' · '):'';
 }
+
+function missDamagePayload(){return Object.fromEntries([...dialogBody.querySelectorAll('[name^="miss-damage:"]')].map(n=>[n.name.split(':')[1],n.value===''?null:Number(n.value)]))}
+function missDamageField(a,target){if(formObject().outcome!=='miss'||!a.data.miss_damage_divisor)return '';const key=String(target?.id||0),value=formObject()['miss-damage:'+key]??'';return input('miss-damage:'+key,'Урон до деления · '+(target?.name||'цель на поле'),value,'number','min="0" max="100000" step="any" required')+`<small data-miss-total="${key}" data-divisor="${a.data.miss_damage_divisor}">${value===''?'Введите итог броска урона со всеми бонусами':'После деления: '+(Number(value)/a.data.miss_damage_divisor).toLocaleString('ru')}. ХП вносит мастер.</small>`}
+document.addEventListener('input',e=>{if(!e.target.name.startsWith('miss-damage:'))return;const key=e.target.name.split(':')[1],box=dialogBody.querySelector('[data-miss-total="'+key+'"]');if(box)box.textContent=e.target.value===''?'Введите итог броска урона со всеми бонусами':'После деления: '+(Number(e.target.value)/Number(box.dataset.divisor)).toLocaleString('ru')+'. ХП вносит мастер.'});

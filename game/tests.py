@@ -3318,3 +3318,53 @@ class GameTests(TestCase):
         self.post(self.alice,p);self.assertEqual(Event.objects.latest('id').inputs['damage_reduction']['remaining'],3)
         for profile in [{'divisor':0,'unarmed':True},{'divisor':2,'unarmed':1},{'divisor':True,'unarmed':True}]:
             with self.assertRaises(ValueError):validate_entry({'damage_reduction':profile})
+
+    def half_miss_setup(self):
+        a=Entry.objects.create(kind='ability',name='Атака с уроном при промахе',data={'damage':True,'formula':'3к6+Мод','miss_damage_divisor':2,'circle':1,'action':'main','rolls':True,'effects':[{'name':'Благословение','stat':'hit','value':2}]})
+        self.a.abilities.add(a);self.start()
+        return a,{'op':'ability.use','character':self.a.pk,'ability':a.pk,'targets':[self.b.pk],'outcome':'miss','roll_result':'Попадание 4; кубики урона 3, 4, 5'}
+
+    def test_half_damage_miss_waits_for_damage_and_skips_hit_effects(self):
+        a,p=self.half_miss_setup();count=Event.objects.count()
+        for values in [{},{str(self.b.pk):True},{str(self.b.pk):-1},{str(self.b.pk):None},{str(self.a.pk):15}]:
+            self.post(self.alice,{**p,'miss_damage':values},400)
+        self.assertEqual(Event.objects.count(),count)
+        self.post(self.alice,{**p,'miss_damage':{str(self.b.pk):15}})
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertEqual(row['damage'],'(3к6+3) / 2')
+        self.assertEqual(row['miss_damage'],{'incoming':15,'divisor':2,'remaining':7.5})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[]);self.assertEqual(self.b.runtime['hp'],10)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['used'][str(a.pk)],1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],0)
+
+    def test_half_damage_miss_accepts_external_and_multiple_damage_totals(self):
+        a,p=self.half_miss_setup()
+        self.post(self.alice,{**p,'targets':[],'miss_damage':{'0':19.5}})
+        self.assertEqual(Event.objects.latest('id').inputs['attack_targets'][0]['miss_damage']['remaining'],9.75)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'targets':[self.a.pk,self.b.pk],'miss_damage':{str(self.a.pk):12,str(self.b.pk):14}})
+        self.assertEqual([r['miss_damage']['remaining'] for r in Event.objects.latest('id').inputs['attack_targets']],[6,7])
+
+    def test_ordinary_miss_has_zero_damage_and_successful_attack_keeps_full_damage(self):
+        a,p=self.half_miss_setup();a.data['miss_damage_divisor']=0;a.save()
+        self.post(self.alice,p)
+        self.assertEqual(Event.objects.latest('id').inputs['attack_targets'][0]['damage'],'0')
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'outcome':'critical'})
+        self.assertEqual(Event.objects.latest('id').inputs['attack_targets'][0]['damage'],'6к6+3')
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],2)
+
+    def test_book_half_miss_profiles_keep_hit_only_effects(self):
+        from .book_audit import abilities
+        from .views import validate_entry
+        from django.conf import settings
+        rows={name:data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text())}
+        self.assertEqual(rows['Удар грома']['miss_damage_divisor'],2)
+        self.assertFalse(rows['Удар грома']['manual'])
+        self.assertEqual(rows['Удар грома']['target'],'single')
+        candidates=[d for d in rows.values() if d.get('miss_damage_divisor')]
+        self.assertGreaterEqual(len(candidates),7)
+        self.assertTrue(any(any(e['name']=='БП' and e['value']==2 for e in d.get('effects',[])) for d in candidates))
+        for value in [True,-1,101,1.5]:
+            with self.assertRaises(ValueError):validate_entry({'miss_damage_divisor':value})

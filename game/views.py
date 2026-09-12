@@ -729,6 +729,7 @@ def validate_entry(d):
     if type(d.get('attack_hit_bonus',0)) is not int:
         raise ValueError('Бонус попадания умения должен быть целым числом')
     bounded(d.get('attack_hit_bonus',0),-1000,1000)
+    if type(d.get('miss_damage_divisor',0)) is not int or not 0<=d.get('miss_damage_divisor',0)<=100:raise ValueError('Делитель урона при промахе: целое число от 0 до 100')
     if type(d.get('automatic_hit',False)) is not bool:raise ValueError('Укажите, попадает ли умение автоматически')
     if type(d.get('damage_from_bp',False)) is not bool:
         raise ValueError('Укажите, зависит ли урон от БП')

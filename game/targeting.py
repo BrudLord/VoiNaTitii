@@ -83,6 +83,21 @@ def resolve(character,ability,calc,targets,payload):
                        'automatic_hit':automatic,'hit':None if automatic else base+bonus,'roll_conditions':roll_conditions(ability,calc),'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
                        'damage':damage+(f' +{extra} [БП]' if extra else '')+(f' +{conductor_bonus:g} [Сверхпроводник]' if conductor_bonus else ''),
                        'armored_hit':base+bonus+calc['armored_hit'] if not automatic and ability.data.get('weapon') and calc['armored_hit'] else None})
+    outcome=payload.get('outcome','hit')
+    divisor=ability.data.get('miss_damage_divisor',0)
+    values=payload.get('miss_damage',{})
+    if outcome=='miss' and divisor:
+        keys={str(row['id'] or 0) for row in result}
+        if not isinstance(values,dict) or set(values)!=keys or any(type(v) not in [int,float] or not 0<=v<=100000 for v in values.values()):
+            raise ValueError('Введите урон до деления для каждой цели: число от 0 до 100000')
+    for row in result:
+        row['outcome']=outcome
+        if outcome=='miss':
+            row['damage_before_miss']=row['damage']
+            row['damage']='('+row['damage']+') / '+str(divisor) if divisor else '0'
+            if divisor:
+                incoming=values[str(row['id'] or 0)]
+                row['miss_damage']={'incoming':incoming,'divisor':divisor,'remaining':incoming/divisor}
     return result
 
 

@@ -101,6 +101,7 @@ def abilities(text):
         own_hit=re.search(r'(?:^|\.\s+)Вы получаете ([+−-]\d+) к попаданию для этой атаки\.',description)
         data['attack_hit_bonus']=int(own_hit[1].replace('−','-')) if own_hit and not re.search(r'если|когда',description,re.I) else 0
         data['damage_from_bp']=bool(re.search(r'(?:^|\.\s+)Урон увеличивается на размер БП\.',description))
+        if re.search(r'при промахе (?:(?:цель|цели) получа(?:ет|ют) )?половину(?: урона)?',description,re.I):data['miss_damage_divisor']=2
         data['automatic_hit']=bool(re.match(r'Цел[ьи] автоматически получа(?:ет|ют)\b',description))
         data['rolls']=category=='active' and ('урона' in description or bool(healing)) or category=='active' and (bool(expressions) or bool(re.search(r'\d+к\d+|брос[а-я]*|провер[а-я]*',description,re.I)))
         if data['automatic_hit']:
@@ -111,6 +112,12 @@ def abilities(text):
         simple=not re.search(r'если|когда|вместо|случайн|кажд|выбер|выбор|можете|следующ|при |попадани|промах| или |аура|стойка',simple_description+' '+keys,re.I)
         from .book_effects import literal_effects
         effects,target=literal_effects(description) if simple and category=='active' else ([],None)
+        if data.get('miss_damage_divisor') and category=='active':
+            effects,target=literal_effects(description.split('.')[0])
+            data['target']='multiple' if description.startswith('Цели ') else 'single'
+            sentences=[s.strip() for s in description.split('.') if s.strip()]
+            if len(sentences)==2 and not re.search(r'если|когда|вместо|может| или ',sentences[0],re.I) and re.match(r'^Цел[ьи] ',sentences[0]) and re.fullmatch(r'При промахе цел[ьи] получа(?:ет|ют) половину урона(?: и не получает эффект)?',sentences[1],re.I):
+                data['manual']=False
         if effects: data.update(effects=effects,target=target,automation_notes='Числовые эффекты применяются автоматически; остальное — по описанию.')
         if any(k.startswith('Аура') for k in keywords):
             data.update(aura=True,category='passive',target='multiple',rolls=False)
