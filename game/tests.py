@@ -1383,3 +1383,76 @@ class GameTests(TestCase):
         self.a.refresh_from_db();self.b.refresh_from_db()
         self.assertNotIn('exhaustion_transfer',self.a.runtime)
         self.assertEqual(computed(self.b)['hit'],0)
+
+    def seeking_setup(self):
+        scene,p,bow,_=self.mystic_setup()
+        seeking=Entry.objects.create(kind='ability',name='Ищущие стрелы',data={'circle':2,'action':'minor','manual':True})
+        self.a.level=8;self.a.save();self.a.abilities.add(seeking)
+        return scene,p,bow,seeking
+
+    def test_seeking_repeat_uses_minor_and_mystic_effects_with_undo(self):
+        from .views import serialize_char
+        scene,p,_,seeking=self.seeking_setup()
+        repeat={**p,'ability':seeking.id,'targets':[self.a.id]}
+        self.post(self.alice,repeat,400)
+        self.post(self.alice,{**p,'outcome':'miss'})
+        self.a.refresh_from_db()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==seeking.id)
+        self.assertEqual(row['reason'],'');self.assertTrue(row['rolls_required'])
+        self.assertTrue(row['mystic_arrows']);self.assertIn('1к6',row['formula'])
+        self.assertEqual(row['data']['action'],'minor');self.assertFalse(row['data']['manual'])
+        self.post(self.alice,{**repeat,'targets':[self.b.id]},400)
+        self.post(self.alice,{**repeat,'roll_result':''},400)
+        self.post(self.bob,repeat,403)
+        self.post(self.alice,repeat)
+        self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.assertEqual(self.a.runtime['used'][str(seeking.id)],1)
+        self.assertEqual(self.a.runtime['mystic_arrows'],2)
+        self.assertNotIn('missed_standard',self.a.runtime)
+        self.assertTrue(any(e.get('status')=='Мороз' for e in self.a.runtime['effects']))
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.assertEqual(self.a.runtime['missed_standard']['targets'],[self.b.id])
+        self.assertEqual(self.a.runtime['mystic_arrows'],1)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertNotIn('missed_standard',self.a.runtime)
+
+    def test_seeking_external_target_and_weapon_and_turn_validation(self):
+        scene,p,bow,seeking=self.seeking_setup()
+        self.post(self.alice,{**p,'targets':[],'outcome':'miss'})
+        repeat={**p,'ability':seeking.id,'targets':[]}
+        self.post(self.alice,repeat,400)
+        self.post(self.alice,{**repeat,'different_target':'yes'},400)
+        self.a.refresh_from_db();self.a.runtime['weapon_id']=0;self.a.save()
+        self.post(self.alice,{**repeat,'different_target':True},400)
+        self.a.runtime['weapon_id']=bow.id;self.a.save()
+        self.post(self.alice,{**repeat,'different_target':True,'outcome':'miss'})
+        self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['missed_standard']['targets'],[])
+        self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.post(self.alice,{**repeat,'different_target':True},400)
+        scene.refresh_from_db()
+        self.post(self.gm,{'op':'scene.end','scene':scene.id,'version':scene.state})
+        self.a.refresh_from_db();self.assertNotIn('missed_standard',self.a.runtime)
+
+    def test_seeking_cannot_use_an_unlearned_or_archived_ability(self):
+        scene,p,_,seeking=self.seeking_setup()
+        self.post(self.alice,{**p,'outcome':'miss'})
+        repeat={**p,'ability':seeking.id,'targets':[]}
+        self.a.abilities.remove(seeking);self.post(self.alice,repeat,403)
+        self.a.abilities.add(seeking);seeking.archived=True;seeking.save()
+        self.post(self.alice,repeat,404)
+
+    def test_another_attack_replaces_the_miss_that_seeking_can_repeat(self):
+        scene,p,_,seeking=self.seeking_setup()
+        self.post(self.alice,{**p,'outcome':'miss'})
+        self.a.refresh_from_db();self.a.runtime['actions']['main']=1;self.a.save()
+        other=Entry.objects.create(kind='ability',name='Другая атака',data={'damage':True,'circle':0,'action':'main'})
+        self.a.abilities.add(other)
+        self.post(self.alice,{**p,'ability':other.id,'mystic_arrows':[],'outcome':'miss'})
+        self.post(self.alice,{**p,'ability':seeking.id,'targets':[]},400)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['missed_standard']['targets'],[self.b.id])
+        self.post(self.alice,{**p,'ability':seeking.id,'targets':[]})

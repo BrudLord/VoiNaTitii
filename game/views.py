@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks
+from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token, reflex_eligible
 from .alignment import schema as alignment_schema, validate_alignment
@@ -98,6 +98,7 @@ def serialize_char(c, user):
     learned = {a.id:a for a in c.abilities.all() if not a.archived}
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
+        a = seeking_arrows.effective(a)
         d = copy.deepcopy(a.data)
         setup=prepared_attacks.profile(c,a)
         if setup and setup['prepare']:d['manual']=False
@@ -413,6 +414,7 @@ def execute(user, p):
             change.watch(c)
             for item in c.items.filter(equipped=True,archived=False):change.depend(item)
             enchantments.start_battle(c,computed(c))
+            c.runtime.pop('missed_standard',None)
             c.runtime.pop('exhaustion_transfer',None)
             c.runtime.update(used={}, mystic_arrows=0, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
                              stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
@@ -440,6 +442,7 @@ def execute(user, p):
             for c in chars.values():
                 from .alchemy import end_battle
                 end_battle(change,c)
+                c.runtime.pop('missed_standard',None)
                 c.runtime.pop('exhaustion_transfer',None)
                 c.runtime.pop('readied',None);c.runtime.pop('readied_queue',None);c.runtime.pop('initiative_shift',None)
                 c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, mystic_arrows=0, temp=0, stun_pending=0, actions=dict(ACTIONS))
@@ -659,6 +662,7 @@ def use_ability(user, p):
     a = get_object_or_404(Entry, pk=p['ability'],kind='ability',archived=False)
     if not a.data.get('system') and not c.abilities.filter(pk=a.pk).exists():
         raise PermissionDenied('Персонаж не владеет этим умением')
+    a = seeking_arrows.effective(a)
     scene = current_scene(c)
     if not scene:
         raise ValueError('Умение можно применить в активном бою')
@@ -685,6 +689,7 @@ def use_ability(user, p):
         raise ValueError('Выберите цель')
     if d.get('target') == 'single' and len(ids) > 1:
         raise ValueError('Выберите одну цель')
+    seeking_arrows.validate(c,a,p,ids)
     arrows=mystic_arrows.resolve(c,a,computed(c),p) if not aura else []
     setup=prepared_attacks.validate(c,a,p,ids) if not aura else None
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
@@ -757,6 +762,7 @@ def use_ability(user, p):
                         put_effect(t,effect)
                     else:
                         apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'))
+    seeking_arrows.record(change,c,a,scene,computed(c),p,ids)
     prepared_attacks.apply(change,c,a,targets,setup)
     mystic_arrows.apply(change,c,[targets[pk] for pk in ids],arrows,p)
     if p.get('use_ready') and not aura:
