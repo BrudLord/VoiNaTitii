@@ -9,7 +9,7 @@ function mysticArrowEffects(a){return (a.mystic_arrows?.options||[]).filter(o=>m
 function updateAttackPreview(){
  const box=el('attack-preview'),a=pendingAbility;if(!box||!a)return;
  const critical=formObject().outcome==='critical';
- box.innerHTML=`<span>База попадания <strong>${a.hit_bonus>=0?'+':''}${a.hit_bonus||0}</strong></span>${a.armored_hit_bonus!==null&&a.armored_hit_bonus!==undefined?`<span>По броне <strong>${a.armored_hit_bonus>=0?'+':''}${a.armored_hit_bonus}</strong></span>`:''}<span>${critical?'База крита':'База урона'} <strong>${esc((critical?a.critical:a.formula))}</strong></span>${attackTargetPreview(a)}`;
+ box.innerHTML=`${a.data.automatic_hit?'':`<span>База попадания <strong>${a.hit_bonus>=0?'+':''}${a.hit_bonus||0}</strong></span>${a.armored_hit_bonus!==null&&a.armored_hit_bonus!==undefined?`<span>По броне <strong>${a.armored_hit_bonus>=0?'+':''}${a.armored_hit_bonus}</strong></span>`:''}`}<span>${critical?'База крита':'База урона'} <strong>${esc((critical?a.critical:a.formula))}</strong></span>${attackTargetPreview(a)}`;
 }
 function mysticArrowLog(value){
  if(!value)return '';

@@ -103,6 +103,8 @@ def abilities(text):
         data['damage_from_bp']=bool(re.search(r'(?:^|\.\s+)Урон увеличивается на размер БП\.',description))
         data['automatic_hit']=bool(re.match(r'Цел[ьи] автоматически получа(?:ет|ют)\b',description))
         data['rolls']=category=='active' and ('урона' in description or bool(healing)) or category=='active' and (bool(expressions) or bool(re.search(r'\d+к\d+|брос[а-я]*|провер[а-я]*',description,re.I)))
+        if data['automatic_hit']:
+            data['rolls']=bool(re.search(r'\d+к\d+|брос[а-я]*|провер[а-я]*',description,re.I)) or bool(data.get('weapon'))
         if data.get('weapon') and school: data['requires']=[school]
         # Only literal, unconditional single-target clauses are compiled automatically.
         simple_description=description.replace(own_hit[0],'.') if own_hit and data['attack_hit_bonus'] else description

@@ -2941,7 +2941,8 @@ class GameTests(TestCase):
         attack=resolve(self.a,a,computed(self.a),[self.b],{})[0]
         self.assertEqual(attack['roll_conditions'],row['roll_conditions']);self.assertEqual(attack['hit'],0)
         self.assertEqual(roll_conditions(Entry(data={'effects':[{'stat':'hp','value':5}]}),computed(self.a)),[])
-        a.data['automatic_hit']=True;self.assertEqual(roll_conditions(a,computed(self.a)),[])
+        a.data['category']='passive';self.assertEqual(roll_conditions(a,computed(self.a)),[])
+        a.data['category']='active';a.data['automatic_hit']=True;self.assertEqual(roll_conditions(a,computed(self.a)),[])
 
     def test_blindness_expiry_and_undo_update_roll_conditions(self):
         from .targeting import roll_conditions
@@ -2967,3 +2968,33 @@ class GameTests(TestCase):
         self.assertTrue(rows['Морозный кристалл']['automatic_hit'])
         self.assertFalse(rows['Гейзер']['automatic_hit'])
         self.assertFalse(rows['Свет и Тьма']['automatic_hit'])
+
+    def test_automatic_hit_rejects_miss_but_requires_physical_damage_roll(self):
+        a=Entry.objects.create(kind='ability',name='Морозный кристалл',data={'automatic_hit':True,'damage':True,'formula':'2к12','rolls':True,'category':'active','action':'main'})
+        self.a.abilities.add(a);self.start()
+        p={'op':'ability.use','character':self.a.pk,'ability':a.pk,'targets':[],'outcome':'miss','roll_result':'14'}
+        count=Event.objects.count();self.post(self.alice,p,400)
+        self.post(self.alice,{**p,'outcome':'hit','roll_result':''},400);self.assertEqual(Event.objects.count(),count)
+        self.post(self.alice,{**p,'outcome':'hit'})
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertTrue(row['automatic_hit']);self.assertIsNone(row['hit']);self.assertEqual(row['mark_penalty'],0)
+        self.assertEqual(Event.objects.latest('id').inputs['roll_result'],'14')
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+
+    def test_automatic_damage_keeps_bp_damage_without_hit_modifiers(self):
+        from .targeting import resolve
+        self.a.runtime['effects']=[{'name':'Метка','stat':'status','value':1},{'name':'Ослепление','stat':'status','value':1}]
+        self.b.runtime['effects']=[{'name':'БП','stat':'target_hit','value':3}]
+        a=Entry(data={'automatic_hit':True,'damage':True,'formula':'5','damage_from_bp':True})
+        row=resolve(self.a,a,computed(self.a),[self.b],{})[0]
+        self.assertIsNone(row['hit']);self.assertEqual(row['target_bonus'],0);self.assertEqual(row['mark_penalty'],0)
+        self.assertEqual(row['bp_damage'],3);self.assertEqual(row['roll_conditions'],[])
+        self.assertIn('+3 [БП]',row['damage'])
+
+    def test_automatic_fixed_damage_does_not_request_a_nonexistent_die(self):
+        from .views import serialize_char
+        a=Entry.objects.create(kind='ability',name='Фиксированный урон',data={'automatic_hit':True,'damage':True,'formula':'5','category':'active'})
+        self.a.abilities.add(a);self.start()
+        row=next(row for row in serialize_char(self.a,self.alice)['abilities'] if row['id']==a.pk)
+        self.assertFalse(row['rolls_required'])
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':a.pk,'targets':[],'outcome':'hit'})

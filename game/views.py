@@ -772,6 +772,7 @@ def use_ability(user, p, embedded=False):
     if aura and not d.get('aura'):
         raise ValueError('Это не аура')
     if not aura:
+        if d.get('automatic_hit') and p.get('outcome')=='miss':raise ValueError('Это умение попадает автоматически: промах невозможен')
         reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False,as_reaction=bool(p.get('as_reaction')))
         if reason:
             raise ValueError(reason)

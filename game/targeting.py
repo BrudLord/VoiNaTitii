@@ -21,7 +21,7 @@ def physical_weapon_units(ability,calc):
 
 def roll_conditions(ability,calc):
     from .statuses import status_name
-    if not (ability.data.get('weapon') or ability.data.get('damage')) or ability.data.get('automatic_hit'):
+    if ability.data.get('category','active')!='active' or not (ability.data.get('weapon') or ability.data.get('damage')) or ability.data.get('automatic_hit'):
         return []
     return ['Помеха на попадание: Ослепление'] if any(status_name(e)=='Ослепление' for e in calc['effects']) else []
 
@@ -67,6 +67,8 @@ def resolve(character,ability,calc,targets,payload):
     if type(included) is not bool:raise ValueError('Укажите, включён ли источник метки в атаку')
     selected={t.pk for t in targets}
     penalty=-3 if any(e.get('source_id') not in selected if e.get('source_id') else not included for e in marks) else 0
+    automatic=bool(ability.data.get('automatic_hit'))
+    if automatic:penalty=0
     base=hit_bonus(character,ability,calc)+penalty
     result=[]
     for target in targets or [None]:
@@ -76,11 +78,11 @@ def resolve(character,ability,calc,targets,payload):
         strength=max((abs(e.get('value',0)) for e in effects if status_name(e)=='Сверхпроводник'),default=0) if target else conductor
         conductor_bonus=strength*physical_weapon_units(ability,calc)/2
         damage=formula(character,ability,payload.get('outcome')=='critical',calc)
-        bonus=target_hit_bonus(effects,ability,calc) if target else external
+        bonus=0 if automatic else target_hit_bonus(effects,ability,calc) if target else external
         result.append({'id':target.pk if target else None,'name':target.name if target else 'Цель на игровом поле',
-                       'hit':base+bonus,'roll_conditions':roll_conditions(ability,calc),'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
+                       'automatic_hit':automatic,'hit':None if automatic else base+bonus,'roll_conditions':roll_conditions(ability,calc),'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
                        'damage':damage+(f' +{extra} [БП]' if extra else '')+(f' +{conductor_bonus:g} [Сверхпроводник]' if conductor_bonus else ''),
-                       'armored_hit':base+bonus+calc['armored_hit'] if ability.data.get('weapon') and calc['armored_hit'] else None})
+                       'armored_hit':base+bonus+calc['armored_hit'] if not automatic and ability.data.get('weapon') and calc['armored_hit'] else None})
     return result
 
 
