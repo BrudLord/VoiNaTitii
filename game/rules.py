@@ -24,7 +24,7 @@ def computed(c):
     selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
     from .enchantments import equipment
     enchantments, focus_id = equipment(c, equipped, selected)
-    from .weaponry import upgrades
+    from .weaponry import upgrades, versatile, held_keywords
     from .passives import lightning_reflexes
     weapon_upgrades=upgrades(selected) if selected else []
     effects = list(c.runtime.get('effects', []))
@@ -69,9 +69,9 @@ def computed(c):
         else:
             other_armor += int(item.data.get('armor', 0))
         if not item.data.get('dice') or item == selected:
-            keywords += list(dict.fromkeys(item.data.get('keywords', [])+item.data.get('families',[])))
+            keywords += held_keywords(item.data)
         if selected and item.pk == selected.pk:
-            weapon = item.data['dice']
+            weapon = versatile(item.data) if versatile(item.data) and item.data.get('grip')=='two' else item.data['dice']
             trained_family = next((name for name in item.data.get('families',[]) if name in trained),None)
             matched_school = Entry.objects.filter(kind='school',name=trained_family).first() if trained_family else None
             weapon_school = matched_school.data.get('stat',primary) if matched_school else item.data.get('stat', primary)
@@ -101,7 +101,9 @@ def computed(c):
             'enchantments':enchantments, 'focus_id':focus_id,
             'initiative':mods['dex'] + sum(p.get('initiative',0) for p in enchantments),
             'forced_movement_reduction':sum(p.get('forced_movement_reduction',0) for p in enchantments),
-            'weapon_keywords':list(dict.fromkeys(selected.data.get('keywords',[])+selected.data.get('families',[]))) if selected else [],
+            'weapon_keywords':held_keywords(selected.data) if selected else [],
+            'versatile':versatile(selected.data) if selected else '',
+            'grip':selected.data.get('grip','one') if selected else 'one',
             'weapon_range_bonus':sum(p.get('range',0) for p in weapon_upgrades),
             'armored_hit':sum(p.get('armored_hit',0) for p in weapon_upgrades),
             'attack_mode':c.runtime.get('attack_mode','melee'),

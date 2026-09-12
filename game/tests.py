@@ -1856,3 +1856,58 @@ class GameTests(TestCase):
         self.assertEqual(row['bp_damage'],3)
         ability.data['keywords']=['Дальнобойный 5']
         self.assertEqual(resolve(self.a,ability,computed(self.a),[],{'external_prone':True})[0]['target_bonus'],0)
+
+    def grip_setup(self):
+        weapon=Item.objects.create(character=self.a,name='Бастард',equipped=True,data={'item_type':'weapon','dice':'1к6','keywords':['Универсальное (1к10)'],'families':['Мечи'],'no_proficiency':True})
+        self.a.runtime['weapon_id']=weapon.id;self.a.save()
+        return weapon,{'op':'weapon.grip','character':self.a.id,'item':weapon.id,'grip':'two'}
+
+    def test_versatile_weapon_changes_dice_keywords_and_critical(self):
+        from .weaponry import keywords
+        weapon,p=self.grip_setup()
+        attack=Entry(name='Удар',data={'weapon':True,'formula':'2Ор + Мод','keywords':['Ближний']})
+        self.assertEqual(formula(self.a,attack),'2к6 + 3')
+        self.post(self.alice,p);self.a.refresh_from_db()
+        calc=computed(self.a)
+        self.assertEqual(formula(self.a,attack),'2к10 + 3')
+        self.assertEqual(formula(self.a,attack,True),'4к10 + 3')
+        self.assertIn('Двуручное',calc['keywords']);self.assertNotIn('Одноручное',calc['keywords'])
+        self.assertIn('Двуручное',keywords(attack,calc))
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(formula(self.a,attack),'2к6 + 3')
+        self.assertIn('Одноручное',computed(self.a)['keywords'])
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertEqual(formula(self.a,attack),'2к10 + 3')
+
+    def test_grip_in_combat_costs_minor_and_preserves_it_on_rejection(self):
+        weapon,p=self.grip_setup();self.start()
+        self.post(self.bob,p,403)
+        self.post(self.alice,{**p,'grip':'invalid'},400)
+        self.post(self.alice,{**p,'item':0},400)
+        self.post(self.alice,p)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.post(self.alice,{**p,'grip':'one'},400)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();weapon.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.assertEqual(weapon.data.get('grip','one'),'one')
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();weapon.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.assertEqual(weapon.data['grip'],'two')
+
+    def test_grip_cannot_bypass_turn_or_stun_or_change_other_weapon(self):
+        weapon,p=self.grip_setup();scene=self.start();self.a.refresh_from_db()
+        self.a.runtime['stun_pending']=1;self.a.save();self.post(self.alice,p,400)
+        self.a.runtime['stun_pending']=0;self.a.save()
+        self.turn(scene,self.alice);self.post(self.alice,p,400)
+        weapon.refresh_from_db();self.assertNotIn('grip',weapon.data)
+
+    def test_two_handed_bonus_uses_effective_weapon_keyword(self):
+        from .enchantments import ability_bonus
+        weapon,p=self.grip_setup()
+        self.a.runtime['effects']=[{'key':'two','name':'Тяжёлый удар','stat':'damage','value':2,'keyword':'Двуручное'}];self.a.save()
+        attack=Entry(name='Атака',data={'weapon':True,'keywords':['Ближний']})
+        self.assertEqual(ability_bonus(computed(self.a),attack,'damage'),0)
+        self.post(self.alice,p);self.a.refresh_from_db()
+        self.assertEqual(ability_bonus(computed(self.a),attack,'damage'),2)
+        spell=Entry(name='Заклинание',data={'keywords':['Ближний']})
+        self.assertEqual(ability_bonus(computed(self.a),spell,'damage'),0)

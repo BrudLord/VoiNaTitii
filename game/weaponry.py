@@ -27,6 +27,7 @@ def compatible(item, spec):
 def keywords(ability,calc):
     words=list(ability.data.get('keywords',[]))
     if not ability.data.get('weapon'):return words
+    words+= [w for w in calc.get('weapon_keywords',[]) if w in ['Одноручное','Двуручное'] and w not in words]
     if ability.data.get('system'):
         words=[w for w in words if not w.startswith(('Ближний','Дальнобойный','Метательное'))]
         ranged=next((w for w in calc.get('weapon_keywords',[]) if w.startswith('Дальнобойный')),None)
@@ -58,3 +59,19 @@ def validate_profile(data):
 def matches_keyword(keyword, words):
     def base(word):return re.sub(r'\s+\d+(?:\s+в\s+\d+)?$', '', str(word)).strip()
     return any(base(keyword)==base(word) for word in words)
+
+
+def versatile(data):
+    """The alternate dice are explicit in the book's Universal keyword."""
+    for word in data.get('keywords',[]):
+        match=re.fullmatch(r'Универсальное\s*\(?\s*(\d+к\d+)\s*\)?',word)
+        if match:return match[1]
+    return ''
+
+
+def held_keywords(data):
+    words=list(data.get('keywords',[]))+list(data.get('families',[]))
+    if versatile(data):
+        words=[w for w in words if w not in ['Одноручное','Двуручное']]
+        words.append('Двуручное' if data.get('grip')=='two' else 'Одноручное')
+    return list(dict.fromkeys(words))

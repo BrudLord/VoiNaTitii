@@ -579,6 +579,28 @@ def execute(user, p):
         if p.get('mode') not in ['melee','ranged']:raise ValueError('Выберите способ атаки')
         change=Change(user,'Способ атаки · '+c.name,current_scene(c))
         change.watch(c).runtime['attack_mode']=p['mode'];change.finish()
+    elif op=='weapon.grip':
+        c=owned(user,p['character'])
+        calc=computed(c)
+        if p.get('grip') not in ['one','two'] or not calc['versatile']:
+            raise ValueError('Выберите хват универсального оружия')
+        if p.get('item')!=calc['weapon_id']:
+            raise ValueError('Выбранное оружие изменилось; откройте его снова')
+        item=get_object_or_404(Item,pk=calc['weapon_id'],character=c,equipped=True,archived=False,quantity__gt=0)
+        if item.data.get('grip','one')==p['grip']:
+            raise ValueError('Этот хват уже выбран')
+        scene=current_scene(c)
+        change=Change(user,'Смена хвата · '+c.name,scene)
+        if scene:
+            if scene.state['order'][scene.state['turn']]!=c.id:
+                raise ValueError('Сменить хват можно в свой ход')
+            if c.runtime.get('stun_pending',0) or any(status_name(e) in ['Сон','Страх'] for e in c.runtime.get('effects',[])):
+                raise ValueError('Сейчас персонаж должен пропускать действия')
+            if c.runtime.get('actions',{}).get('minor',0)<1:
+                raise ValueError('Нет малого действия для смены хвата')
+            change.watch(c).runtime['actions']['minor']-=1
+        change.watch(item).data['grip']=p['grip']
+        change.finish()
     elif op in ['weapon.select','focus.select']:
         c = owned(user,p['character'])
         weapon = get_object_or_404(Item,pk=p['item'],character=c,equipped=True,quantity__gt=0,archived=False) if p.get('item') else None
