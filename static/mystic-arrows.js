@@ -9,7 +9,7 @@ function mysticArrowEffects(a){return (a.mystic_arrows?.options||[]).filter(o=>m
 function updateAttackPreview(){
  const box=el('attack-preview'),a=pendingAbility;if(!box||!a)return;
  const critical=formObject().outcome==='critical';
- const bonus=(a.mystic_arrows?.options||[]).filter(o=>mysticArrowPayload().mystic_arrows.includes(o.id)&&o.damage_contribution).map(o=>` +${o.damage_contribution.value} [${o.damage_contribution.type}]`).join('');
+ const bonus=[...(a.mystic_arrows?.options||[]).filter(o=>mysticArrowPayload().mystic_arrows.includes(o.id)),...selectedChargedArrows(a)].filter(o=>o.damage_contribution).map(o=>` +${o.damage_contribution.value} [${o.damage_contribution.type}]`).join('');
  box.innerHTML=`<span>Попадание <strong>${a.hit_bonus>=0?'+':''}${a.hit_bonus||0}</strong></span>${a.armored_hit_bonus!==null&&a.armored_hit_bonus!==undefined?`<span>По броне <strong>${a.armored_hit_bonus>=0?'+':''}${a.armored_hit_bonus}</strong></span>`:''}<span>${critical?'Крит':'Урон'} <strong>${esc((critical?a.critical:a.formula)+bonus)}</strong></span>`;
 }
 function mysticArrowLog(value){

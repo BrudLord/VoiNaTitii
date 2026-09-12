@@ -1456,3 +1456,92 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
         self.assertEqual(self.a.runtime['missed_standard']['targets'],[self.b.id])
         self.post(self.alice,{**p,'ability':seeking.id,'targets':[]})
+
+    def charged_setup(self):
+        scene,p,_,_=self.mystic_setup()
+        prepare=Entry.objects.create(kind='ability',name='Заряженные стрелы',data={'circle':3,'action':'minor','rolls':True})
+        attack=Entry.objects.create(kind='ability',name='Двойной выстрел для проверки',data={'circle':1,'action':'main','weapon':True,'damage':True,'formula':'2Ор + Мод'})
+        self.a.refresh_from_db();self.a.level=8;self.a.save();self.a.abilities.add(prepare,attack)
+        prep={'op':'ability.use','character':self.a.id,'ability':prepare.id,'targets':[]}
+        shot={**p,'ability':attack.id,'mystic_arrows':[],'charged_arrows':['stun','stun']}
+        return scene,prep,shot
+
+    def test_charged_arrows_repeat_effects_and_undo_without_mana_cost(self):
+        from .views import serialize_char
+        scene,prep,shot=self.charged_setup()
+        self.post(self.alice,shot,400)
+        self.post(self.alice,prep)
+        self.a.refresh_from_db()
+        ability=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==shot['ability'])
+        self.assertEqual(ability['charged_arrows']['limit'],2)
+        self.post(self.alice,{**shot,'outcome':'critical'})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertNotIn('charged_arrows',self.a.runtime)
+        self.assertEqual(self.a.runtime['mystic_arrows'],0)
+        self.assertFalse(any(e.get('status')=='Истощение маны' for e in self.a.runtime['effects']))
+        stun=next(e for e in self.b.runtime['effects'] if e.get('status')=='Оглушение')
+        self.assertEqual(stun['value'],4)
+        self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertIn('charged_arrows',self.a.runtime);self.assertEqual(self.b.runtime['effects'],[])
+        self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertNotIn('charged_arrows',self.a.runtime)
+
+    def test_charged_arrows_reject_extra_slots_and_invalid_targets_atomically(self):
+        scene,prep,shot=self.charged_setup();self.post(self.alice,prep)
+        for extra in [{'charged_arrows':['frost']*3},{'charged_arrows':['unknown']},{'charged_arrows':'frost'},
+                      {'charged_target':self.a.id},{'targets':[self.a.id,self.b.id]}, {'roll_result':''}]:
+            self.post(self.alice,{**shot,**extra},400)
+        self.post(self.bob,shot,403)
+        self.a.refresh_from_db();self.assertIn('charged_arrows',self.a.runtime)
+        self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.post(self.alice,{**shot,'targets':[self.a.id,self.b.id],'charged_target':self.b.id})
+        self.a.refresh_from_db();self.assertFalse(any(e.get('status')=='Оглушение' for e in self.a.runtime['effects']))
+
+    def test_charged_arrows_survive_circle_zero_but_are_spent_on_a_miss(self):
+        scene,prep,shot=self.charged_setup();self.post(self.alice,prep)
+        standard=Entry.objects.get(name='Стандартная атака')
+        self.post(self.alice,{**shot,'ability':standard.id,'charged_arrows':[],'mystic_arrows':['shift'],'outcome':'miss'})
+        self.a.refresh_from_db();self.assertIn('charged_arrows',self.a.runtime)
+        self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.post(self.alice,{**shot,'outcome':'miss'})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertNotIn('charged_arrows',self.a.runtime);self.assertEqual(self.b.runtime['effects'],[])
+        self.assertEqual(self.a.runtime['mystic_arrows'],1)
+
+    def test_charged_arrows_are_spent_by_non_weapon_circle_one_and_reset_at_end(self):
+        scene,prep,shot=self.charged_setup();self.post(self.alice,prep)
+        heal=Entry.objects.create(kind='ability',name='Фиксированное лечение',data={'circle':1,'effects':[{'stat':'hp','value':3}]})
+        self.a.abilities.add(heal)
+        self.post(self.alice,{**shot,'ability':heal.id,'charged_arrows':[]})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertNotIn('charged_arrows',self.a.runtime);self.assertEqual(self.b.runtime['hp'],13)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertIn('charged_arrows',self.a.runtime)
+        scene.refresh_from_db();self.post(self.gm,{'op':'scene.end','scene':scene.id,'version':scene.state})
+        self.a.refresh_from_db();self.assertNotIn('charged_arrows',self.a.runtime)
+        self.post(self.gm,{'op':'undo'});self.a.refresh_from_db();self.assertIn('charged_arrows',self.a.runtime)
+
+    def test_charged_arrows_external_target_and_boulder_contributions(self):
+        scene,prep,shot=self.charged_setup()
+        self.a.abilities.add(Entry.objects.create(kind='ability',name='Глыба',data={'category':'passive'}))
+        self.post(self.alice,prep)
+        self.post(self.alice,{**shot,'targets':[],'outcome':'critical'})
+        event=Event.objects.latest('id')
+        parts=event.inputs['damage_contributions']
+        self.assertEqual(sum(p['value'] for p in parts if p['key']=='boulder_stun'),4)
+        self.assertTrue(event.inputs['charged_arrows']['external_target'])
+
+    def test_charged_single_target_and_reaction_validation(self):
+        scene,prep,shot=self.charged_setup()
+        attack=Entry.objects.get(pk=shot['ability']);attack.data['target']='single';attack.save()
+        self.post(self.alice,prep)
+        self.post(self.alice,{**shot,'charged_target':0},400)
+        self.b.refresh_from_db();self.b.runtime['effects']=[{'key':'bless','status':'Благословение','name':'Благословение','stat':'hit','value':2,'duration':'turns','remaining':3}];self.b.save()
+        frost={**shot,'charged_arrows':['frost']}
+        key=f'{self.b.id}:arrow:charged:0:frost'
+        self.post(self.alice,{**frost,'reactions':{key:'unknown'}},400)
+        self.a.refresh_from_db();self.assertIn('charged_arrows',self.a.runtime)
+        self.post(self.alice,{**frost,'reactions':{key:'bless'}})
+        self.b.refresh_from_db()
+        self.assertTrue(any(e.get('status')=='Чистые льды' for e in self.b.runtime['effects']))

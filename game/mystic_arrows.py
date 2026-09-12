@@ -52,12 +52,12 @@ def resolve(character, ability, calc, payload):
     return [next(o for o in available['options'] if o['id']==k) for k in selected]
 
 
-def apply(change, character, targets, choices, payload):
+def apply(change, character, targets, choices, payload, *, count_use=True, log_key='mystic_arrows'):
     if not choices:return
     change.watch(character)
     uses=character.runtime.get('mystic_arrows',0)
-    character.runtime['mystic_arrows']=uses+1
-    if uses:
+    if count_use:character.runtime['mystic_arrows']=uses+1
+    if uses and count_use:
         effects=character.runtime.setdefault('effects',[])
         old=next((e for e in effects if e.get('key')=='status:Истощение маны'),None)
         value=(old['value'] if old else 0)-1
@@ -65,8 +65,8 @@ def apply(change, character, targets, choices, payload):
         put_effect(character,{'key':'status:Истощение маны','name':'Истощение маны','status':'Истощение маны',
                               'stat':'hit','value':value,'duration':'battle','source':character.name,'source_id':character.id})
     hit=payload.get('outcome','hit')!='miss'
-    change.inputs['mystic_arrows']={'choices':choices,'hit':hit,'penalty_added':1 if uses else 0,
-                                    'use':uses+1,'external_target':not targets}
+    change.inputs[log_key]={'choices':choices,'hit':hit,'penalty_added':1 if uses and count_use else 0,
+                                    'use':uses+(1 if count_use else 0),'external_target':not targets}
     change.label+=' · '+', '.join(o['name'] for o in choices)
     if not hit:return
     change.inputs.setdefault('damage_contributions',[]).extend(o['damage_contribution'] for o in choices if o.get('damage_contribution'))
@@ -74,7 +74,7 @@ def apply(change, character, targets, choices, payload):
         for option in choices:
             if option.get('movement'):
                 amount=max(0,option['movement']-computed(target)['forced_movement_reduction'])
-                change.inputs['mystic_arrows'].setdefault('movements',[]).append({'target':target.name,'cells':amount})
+                change.inputs[log_key].setdefault('movements',[]).append({'target':target.name,'cells':amount})
             if 'effect' not in option:continue
             effect=option['effect']
             apply_status(change.watch(target),{**effect,'key':'status:'+effect['status'],'name':effect['status'],

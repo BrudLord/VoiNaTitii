@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows
+from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows, charged_arrows
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token, reflex_eligible
 from .alignment import schema as alignment_schema, validate_alignment
@@ -100,6 +100,8 @@ def serialize_char(c, user):
     for a in learned.values():
         a = seeking_arrows.effective(a)
         d = copy.deepcopy(a.data)
+        charged=charged_arrows.profile(c,a)
+        if charged and charged['prepare']:d['manual']=False
         setup=prepared_attacks.profile(c,a)
         if setup and setup['prepare']:d['manual']=False
         if roll_pools.profile(a) or crafting.profile(a) or a.name in ['Молниеносные рефлексы','Интуитивное владение','Мистическая точность','Мистические стрелы','Двойной заряд']:d['manual']=False
@@ -111,7 +113,7 @@ def serialize_char(c, user):
             hit_bonus += calc['mods'][calc['primary']]
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
                           'mystic_arrows':mystic_arrows.profile(c,a,calc),
-                          'attack_setup':setup,
+                          'attack_setup':setup, 'charged_arrows':charged,
                           'roll_pool':roll_pools.profile(a), 'hit_bonus': hit_bonus, 'armored_hit_bonus':hit_bonus+calc['armored_hit'] if d.get('weapon') and calc['armored_hit'] else None, 'enchantments':enchantments.for_ability(calc,a),
                           'remaining': None if limit(c.level, int(d.get('circle', 0))) is None else
                           max(0, limit(c.level, int(d.get('circle', 0))) - c.runtime.get('used', {}).get(str(a.id), 0)),
@@ -119,7 +121,7 @@ def serialize_char(c, user):
                           'ready_reason':availability(c,a,scene,calc,readied=True),
                           'reason': availability(c, a, scene, calc), 'formula': formula(c, a, calc=calc,scene=scene), 'critical': formula(c, a, not bool(roll_pools.profile(a)), calc,scene=scene),
                           'damage_contributions':boulder_bonus(c,a,calc,scene),
-                          'rolls_required': rolls_required(a) or bool(a.data.get('weapon'))})
+                          'rolls_required': a.name!=charged_arrows.NAME and (rolls_required(a) or bool(a.data.get('weapon')))})
     return {'id': c.id, 'name': c.name, 'owner_id': c.owner_id, 'owner': c.owner.username,
             'editable': c.owner_id == user.id or master(user), 'level': c.level, 'info': c.info,
             'stats': c.stats, 'calc': calc, 'runtime': c.runtime, 'abilities': abilities,
@@ -414,7 +416,7 @@ def execute(user, p):
             change.watch(c)
             for item in c.items.filter(equipped=True,archived=False):change.depend(item)
             enchantments.start_battle(c,computed(c))
-            c.runtime.pop('missed_standard',None)
+            c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
             c.runtime.pop('exhaustion_transfer',None)
             c.runtime.update(used={}, mystic_arrows=0, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
                              stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
@@ -442,7 +444,7 @@ def execute(user, p):
             for c in chars.values():
                 from .alchemy import end_battle
                 end_battle(change,c)
-                c.runtime.pop('missed_standard',None)
+                c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
                 c.runtime.pop('exhaustion_transfer',None)
                 c.runtime.pop('readied',None);c.runtime.pop('readied_queue',None);c.runtime.pop('initiative_shift',None)
                 c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, mystic_arrows=0, temp=0, stun_pending=0, actions=dict(ACTIONS))
@@ -676,7 +678,7 @@ def use_ability(user, p):
         reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False,as_reaction=bool(p.get('as_reaction')))
         if reason:
             raise ValueError(reason)
-        needs_roll = (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
+        needs_roll = a.name!=charged_arrows.NAME and (rolls_required(a) or bool(a.data.get('weapon'))) and not roll_pools.profile(a)
         if needs_roll and not str(p.get('roll_result', '')).strip():
             raise ValueError('Введите результат физического броска. Действие пока не применено.')
     pool_targets={t.id:t for t in Character.objects.filter(id__in=scene.state['order'])}
@@ -691,6 +693,7 @@ def use_ability(user, p):
         raise ValueError('Выберите одну цель')
     seeking_arrows.validate(c,a,p,ids)
     arrows=mystic_arrows.resolve(c,a,computed(c),p) if not aura else []
+    charged=charged_arrows.resolve(c,a,p,ids) if not aura else None
     setup=prepared_attacks.validate(c,a,p,ids) if not aura else None
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
@@ -762,7 +765,8 @@ def use_ability(user, p):
                         put_effect(t,effect)
                     else:
                         apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'))
-    seeking_arrows.record(change,c,a,scene,computed(c),p,ids)
+    if not aura:seeking_arrows.record(change,c,a,scene,computed(c),p,ids)
+    charged_arrows.apply(change,c,a,targets,charged,p)
     prepared_attacks.apply(change,c,a,targets,setup)
     mystic_arrows.apply(change,c,[targets[pk] for pk in ids],arrows,p)
     if p.get('use_ready') and not aura:
