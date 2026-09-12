@@ -746,3 +746,9 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'item.save','character':self.a.id,'name':'Новый доспех','quantity':1,'equipped':True,'data':{'item_type':'armor','armor':4}})
         old.refresh_from_db();self.assertFalse(old.equipped);self.assertEqual(computed(self.a)['ac'],9)
         self.post(self.alice,{'op':'undo'});old.refresh_from_db();self.assertTrue(old.equipped);self.assertEqual(computed(self.a)['ac'],7)
+
+    def test_archived_item_never_contributes_to_character_calculations(self):
+        item=Item.objects.create(character=self.a,name='Архивный клинок',quantity=1,equipped=True,archived=True,
+                                 data={'dice':'1к6','armor':4,'effects':[{'stat':'hit','value':20}]})
+        calc=computed(self.a);self.assertEqual(calc['hit'],0);self.assertEqual(calc['ac'],5);self.assertTrue(calc['unarmed'])
+        self.post(self.alice,{'op':'weapon.select','character':self.a.id,'item':item.id},404)

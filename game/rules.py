@@ -18,7 +18,7 @@ def definition(pk):
 
 def computed(c):
     stats = {k: int(c.stats.get(k, 10)) for k, _ in STATS}
-    equipped = list(c.items.filter(equipped=True,quantity__gt=0).order_by('id'))
+    equipped = list(c.items.filter(equipped=True,quantity__gt=0,archived=False).order_by('id'))
     weapons = [i for i in equipped if i.data.get('dice')]
     weapon_id=c.runtime.get('weapon_id',c.info.get('weapon_id'))
     selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)

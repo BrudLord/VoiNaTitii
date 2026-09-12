@@ -537,7 +537,7 @@ def execute(user, p):
         c.revision+=1;c.save(update_fields=['revision'])
     elif op in ['weapon.select','focus.select']:
         c = owned(user,p['character'])
-        weapon = get_object_or_404(Item,pk=p['item'],character=c,equipped=True,quantity__gt=0) if p.get('item') else None
+        weapon = get_object_or_404(Item,pk=p['item'],character=c,equipped=True,quantity__gt=0,archived=False) if p.get('item') else None
         is_focus=op=='focus.select'
         if weapon and (weapon.data.get('item_type')!='focus' if is_focus else not weapon.data.get('dice')):
             raise ValueError('Выберите оружие')
