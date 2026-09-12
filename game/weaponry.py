@@ -148,8 +148,8 @@ def wide_swing_profile(ability):
 
 
 def validate_wide_swing(data):
-    if 'wide_swing' not in data:return
-    profile=data['wide_swing']
+    profile=data.get('wide_swing')
+    if profile is None:return
     if not isinstance(profile,dict) or set(profile)!={'hit','reach'}:
         raise ValueError('Укажите бонус попадания и досягаемость Широкого замаха')
     if type(profile['hit']) is not int or not -1000<=profile['hit']<=1000 or type(profile['reach']) is not int or not 0<=profile['reach']<=100:

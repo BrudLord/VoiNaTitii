@@ -2791,7 +2791,7 @@ class GameTests(TestCase):
         calc=computed(self.a);self.assertEqual(calc['hit'],2);self.assertEqual(calc['weapon_reach'],3)
         payload['data']['wide_swing']={'hit':0,'reach':0};self.post(self.gm,payload)
         calc=computed(self.a);self.assertEqual(calc['hit'],0);self.assertEqual(calc['weapon_reach'],0)
-        for profile in [None,{}, {'hit':True,'reach':1},{'hit':2,'reach':-1},{'hit':2,'reach':1,'unknown':True}]:
+        for profile in [{}, {'hit':True,'reach':1},{'hit':2,'reach':-1},{'hit':2,'reach':1,'unknown':True}]:
             payload['data']['wide_swing']=profile;self.post(self.gm,payload,400)
         self.assertEqual(computed(self.a)['hit'],0)
 
@@ -3417,3 +3417,32 @@ class GameTests(TestCase):
         self.assertEqual(editable_data(e,{'unarmed_combat':custom})['unarmed_combat'],custom)
         for value in [None,[],4,'invalid']:
             with self.assertRaises(ValueError):validate_entry(value)
+
+    def test_disabled_ability_profiles_survive_save_and_reopening(self):
+        from .views import serialize_char
+        from .personal_abilities import definition
+        from .weaponry import wide_swing_profile, unarmed_profile
+        from .stances import sphere_profile
+        from .defenses import profile
+        cases=[('Бой без оружия','unarmed_combat',unarmed_profile),
+               ('Парирующие потоки','damage_reduction',profile),
+               ('Элементальная сфера','elemental_sphere',sphere_profile),
+               ('Широкий замах','wide_swing',wide_swing_profile)]
+        for name,key,resolve in cases:
+            original=Entry.objects.create(kind='ability',name=name,data={'category':'passive'})
+            self.a.abilities.add(original)
+            self.a.refresh_from_db()
+            result=self.post(self.alice,{'op':'character.ability.save','character':self.a.pk,'id':original.pk,
+                'revision':self.a.revision,'name':name,'data':{'category':'passive',key:None}})
+            personal=Entry.objects.get(pk=result['id'])
+            self.assertIsNone(resolve(personal))
+            self.assertIsNone(definition(personal)['data'][key])
+            self.assertIsNotNone(resolve(original))
+            self.post(self.gm,{'op':'entry.save','id':original.pk,'kind':'ability','name':name,'data':{'category':'passive',key:None}})
+            original.refresh_from_db();self.assertIsNone(resolve(original))
+            self.assertIsNone(definition(original)['data'][key])
+        self.a.refresh_from_db()
+        rendered=serialize_char(self.a,self.alice)
+        self.assertFalse(rendered['calc']['unarmed_dice'])
+        self.assertFalse(rendered['calc']['ignore_weapon_requirements'])
+        self.assertEqual(rendered['calc']['weapon_reach'],0)
