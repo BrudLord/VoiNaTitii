@@ -88,3 +88,11 @@ class AttackSequencePlanTests(SimpleTestCase):
             with self.subTest(name=name):
                 block = text.split('##### ' + name + '\n', 1)[1].split('}}', 1)[0]
                 self.assertTrue(any(word in block for word in ['атаки', 'атак', 'выстрел']), block)
+
+    def test_book_compiler_exposes_sequences_without_hiding_unhandled_side_effects(self):
+        from .book_audit import abilities
+        text=(settings.BASE_DIR/'rules/player-book.txt').read_text()
+        rows={name:data for name,_,data,_ in abilities(text) if name in BOOK}
+        for name,spec in BOOK.items():
+            self.assertEqual(rows[name]['attack_sequence'],spec)
+            self.assertEqual(rows[name]['manual'],name in ['Захват пространства','Тормозящие стрелы'])

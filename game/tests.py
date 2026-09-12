@@ -3864,3 +3864,21 @@ class GameTests(TestCase):
         response=self.sequence_preview_request(p,2);self.assertEqual(response.status_code,400,response.content[:500])
         self.a.refresh_from_db();self.b.refresh_from_db()
         self.assertEqual(self.a.runtime['actions']['main'],1);self.assertFalse(self.b.runtime['effects']);self.assertEqual(Event.objects.count(),before)
+
+    def test_woven_sequence_preview_includes_parent_attack_and_rolls_everything_back(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        spell.data.update(damage=True,formula='1к6',attack_sequence={'count':2,'targets':'same'});spell.save()
+        parent={k:v for k,v in p.items() if k!='weave'}
+        child={'character':self.a.pk,'ability':spell.pk,'targets':[self.b.pk],'weave_parent':parent,'attacks':[
+            {'target':self.b.pk,'outcome':'hit','roll_result':'17; урон 3'},{'target':self.b.pk}]}
+        before=Event.objects.count();response=self.sequence_preview_request(child,1)
+        self.assertEqual(response.status_code,200,response.content[:1000])
+        data=response.json();actor=next(c for c in data['characters'] if c['id']==self.a.pk)
+        self.assertEqual(actor['runtime']['actions']['main'],0)
+        self.assertEqual(len(data['inputs']['attack_sequence']['attacks']),1)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(Event.objects.count(),before);self.assertEqual(self.a.runtime['actions']['main'],1);self.assertEqual(self.b.runtime['temp'],0)
+        child.pop('weave_parent');child['attacks'][1].update(outcome='critical',roll_result='20; урон 8')
+        self.post(self.alice,{**parent,'weave':child});self.a.refresh_from_db()
+        self.assertEqual(Event.objects.count(),before+1);self.assertEqual(self.a.runtime['used'][str(spell.pk)],1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertTrue(self.a.runtime.get('mystic_weaving'))

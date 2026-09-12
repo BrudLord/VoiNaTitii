@@ -933,10 +933,11 @@ def use_ability(user, p, embedded=False, *, sequence_step=False, preview_steps=N
     if embedded or sequence_step:return change
     if weave and weave.get('child'):
         change.finish(defer_record=True)
-        child=use_ability(user,weave['child'],embedded=True)
+        child=use_ability(user,weave['child'],embedded=True,preview_steps=preview_steps)
         change.absorb(child)
         change.inputs['weaving']={'spell':weave['spell'],'center':weave['center'],'inputs':child.inputs}
     change.finish()
+    return change
 
 
 @login_required
@@ -1037,9 +1038,13 @@ def sequence_preview(request):
             clock=Clock.objects.select_for_update().get(pk=1)
             if type(p.get('sequence_revision')) is not int or p['sequence_revision']!=clock.revision:
                 raise ValueError('Бой изменился. Обновите план атак.')
-            change=use_ability(request.user,{**p,'op':'ability.use','attacks':planned},preview_steps=completed)
+            child={**p,'op':'ability.use','attacks':planned}
+            parent=child.pop('weave_parent',None)
+            if parent is not None and not isinstance(parent,dict):raise ValueError('Некорректная атака плетения')
+            payload={**parent,'op':'ability.use','character':p['character'],'sequence_revision':p['sequence_revision'],'weave':child} if parent is not None else child
+            change=use_ability(request.user,payload,preview_steps=completed)
             scene=change.scene
-            result={'revision':clock.revision,'completed':completed,'inputs':change.inputs,
+            result={'revision':clock.revision,'completed':completed,'inputs':change.inputs['weaving']['inputs'] if parent is not None else change.inputs,
                     'characters':[serialize_char(c,request.user) for c in Character.objects.filter(pk__in=scene.state['order'])]}
             transaction.set_rollback(True)
         return JsonResponse(result)

@@ -3,6 +3,7 @@ function weavingField(a){return a.weaving?.ready?selector('weave_ability','Ми�
 function weavingPrepare(a){modal(a.name,`<p>${esc(a.description)}</p><p>Следующая стандартная атака позволит применить магическое умение без дополнительного действия.</p>${a.use_ready?readyFields(current(),a.ready_id):''}`,async()=>api({op:'ability.use',character:current().id,ability:a.id,targets:[],as_reaction:!!a.as_reaction,...readyPayload(a,formObject())}), 'Подготовить')}
 function weavingNotice(c){return c.runtime.mystic_weaving?'<p class="notice">Мистическое плетение подготовлено · следующая стандартная атака.</p>':''}
 async function submitAbility(payload){
+ if(sequenceCapture&&pendingAbility?._sequence)return submitSequence(payload);
  if(weavingCapture){
   const capture=weavingCapture;
   if(payload.ability!==capture.spell.id)throw Error('Откройте стандартную атаку заново');
@@ -15,7 +16,7 @@ async function submitAbility(payload){
   return {next:()=>{
    weavingCapture={attack:payload,spell};
    abilityForm({...spell,_weave:true,...(drawCharacter?{_draw_character:drawCharacter}:{})});
-   el('dialog-submit').textContent='Применить оба';
+   el('dialog-submit').textContent=spell.attack_sequence?'К броскам серии':'Применить оба';
    const names=payload.targets.length?payload.targets.map(id=>byId(S.characters,id)?.name).join(', '):'цель на игровом поле';
    const intro=document.createElement('div');intro.className='notice';
    intro.innerHTML=esc('Плетение · цель атаки: '+names+'. Дальность умения не ограничивает применение.')+(spell.weaving_area?'<label><input type="checkbox" name="weave_center" required> Получатели выбраны в области с центром на цели атаки</label>':'');

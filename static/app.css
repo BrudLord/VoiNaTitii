@@ -70,3 +70,5 @@
 .stock-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}.stock-filters>input{flex:1 1 240px;min-width:160px}.stock-filters>.f-select{flex:0 1 160px}.stock-filters .f-select-button{min-width:130px}.stock-result-count:empty{display:none}.stock-result-count{font-size:.8rem;margin:4px 0}.stock-group h3{font-size:.8rem;color:var(--muted);margin:12px 0 0}.stock-filters [hidden]{display:none}@media(max-width:600px){.stock-filters>input{flex-basis:100%}.stock-filters>.f-select{flex:1 1 120px}}
 
 .stock-browser .stock-row{padding:8px 0}
+
+.sequence-target{min-width:0}.sequence-target label+label{margin-top:8px}.sequence-tools{display:flex;justify-content:flex-end;margin-bottom:8px}.sequence-tools button{padding:4px 8px;font-size:12px}.sequence-movement{margin-top:12px}
