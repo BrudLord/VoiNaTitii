@@ -36,3 +36,26 @@ test('retrying an uncertain final response reuses the same operation key',async(
  t.ctx.sequenceReview({characters:t.ctx.S.characters,inputs:{attack_sequence:{attacks:[{inputs:{}}]}}});const commit=t.save();
  await assert.rejects(commit,/Нет связи/);await commit();assert.deepEqual(keys,['series-key','series-key']);
 });
+test('choosing a spell in a series opens a composed draft without dropping the choice or saving',async()=>{
+ const t=setup();t.run("sequenceCapture={index:0,root:{character:1,ability:7,sequence_revision:12},plan:[{target:2},{target:2}],forms:[]}");
+ t.ctx.response.characters=[{id:1,abilities:[{id:9,weavable:true}]}];let bridge;t.ctx.sequenceSpell=b=>bridge=b;
+ const result=await t.ctx.submitSequence({character:1,ability:7,targets:[2],outcome:'hit',roll_result:'18; 4',weave_ability:9});
+ assert.equal(t.ctx.writes.length,0);assert.equal(t.ctx.request.body.completed,1);assert.equal(t.run('sequenceCapture.plan[0].roll_result'),undefined);
+ result.next();assert.equal(bridge.spell.id,9);assert.equal(bridge.row.roll_result,'18; 4');assert.equal(bridge.attack.weave_ability,9);
+});
+test('ordinary woven spell is validated with its attack and only then advances the outer series',async()=>{
+ const t=setup();t.run("sequenceCapture={index:0,root:{character:1,ability:7,sequence_revision:12},plan:[{target:2},{target:2}],forms:[]};sequenceBridge={outer:sequenceCapture,index:0,row:{target:2,outcome:'hit',roll_result:'18'},fields:[],spell:{id:9}}");
+ await t.ctx.submitSequenceSpell({ability:9,targets:[2],roll_result:'6'});
+ assert.equal(t.ctx.writes.length,0);assert.equal(t.ctx.request.body.attacks[0].weave.ability,9);assert.equal(t.run('sequenceCapture.plan[0].weave.roll_result'),'6');assert.equal(t.run('sequenceBridge'),null);
+});
+test('a spell series returns to the outer attack without committing a standalone event',async()=>{
+ const t=setup();t.nodes['dialog-submit']={insertAdjacentHTML(){}};
+ t.run("const outer={index:0,root:{character:1,ability:7,sequence_revision:12},plan:[{target:1},{target:1}],forms:[]};sequenceCapture={ability:{name:'Заклинание'},root:{character:1,ability:9,sequence_revision:12,weave_parent:{ability:7},before_sequence:{completed:0}},plan:[{target:1,roll_result:'19'}],returnBridge:{outer,index:0,row:{target:1,roll_result:'18'},fields:[]}};");
+ t.ctx.sequenceReview({characters:t.ctx.S.characters,inputs:{attack_sequence:{attacks:[{inputs:{}}]}}});await t.save()();
+ assert.equal(t.ctx.writes.length,0);assert.equal(t.ctx.request.body.ability,7);const child=t.ctx.request.body.attacks[0].weave;assert.equal(child.ability,9);assert.equal(child.attacks[0].roll_result,'19');assert.equal(child.before_sequence,undefined);assert.equal(child.weave_parent,undefined);
+});
+test('canceling a woven spell during preview cannot restore its abandoned outer draft',async()=>{
+ const t=setup();t.run("sequenceCapture={root:{},plan:[{target:2}],forms:[]};sequenceBridge={outer:sequenceCapture,index:0,row:{target:2},fields:[],spell:{id:9}}");let finish;t.ctx.fetch=()=>new Promise(resolve=>finish=resolve);
+ const pending=t.ctx.submitSequenceSpell({ability:9});t.ctx.clearSequence();finish({ok:true,json:async()=>t.ctx.response});await pending;
+ assert.equal(t.run('sequenceCapture'),null);assert.equal(t.ctx.writes.length,0);
+});

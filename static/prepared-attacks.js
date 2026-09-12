@@ -1,6 +1,6 @@
 function transferPreparationForm(a){
  const c=current();
- modal(a.name,`<p>${esc(a.description)}</p><p>Подготовить истощение <strong>${a.attack_setup.strength}</strong> для следующего попадания.</p><small>${a.use_ready?'Отложенное действие':a.as_reaction?'Реакция':'Малое действие'}. Собственное истощение сохраняется; промах не расходует подготовку.</small>${c.runtime.exhaustion_transfer?'<p class="notice">Новая подготовка заменит предыдущую.</p>':''}${a.use_ready?readyFields(c,a.ready_id):''}`,async()=>api({op:'ability.use',character:c.id,ability:a.id,targets:[],as_reaction:!!a.as_reaction,...readyPayload(a,formObject())}), 'Подготовить');
+ modal(a.name,`<p>${esc(a.description)}</p><p>Подготовить истощение <strong>${a.attack_setup.strength}</strong> для следующего попадания.</p><small>${a.use_ready?'Отложенное действие':a.as_reaction?'Реакция':'Малое действие'}. Собственное истощение сохраняется; промах не расходует подготовку.</small>${c.runtime.exhaustion_transfer?'<p class="notice">Новая подготовка заменит предыдущую.</p>':''}${a.use_ready?readyFields(c,a.ready_id):''}`,async()=>submitAbility({op:'ability.use',character:c.id,ability:a.id,targets:[],as_reaction:!!a.as_reaction,...readyPayload(a,formObject())}), 'Подготовить');
 }
 function transferTargetFields(a){return a.attack_setup&&!a.attack_setup.prepare?`<div id="transfer-target" class="notice"></div>`:''}
 function updateTransferTargets(){

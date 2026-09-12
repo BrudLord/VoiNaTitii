@@ -1,8 +1,9 @@
 let weavingCapture=null;
 function weavingField(a){return a.weaving?.ready?selector('weave_ability','Мистическое плетение',current().abilities.filter(x=>x.weavable&&x.remaining!==0).map(x=>({id:x.id,name:x.name+' · '+x.remaining+' прим.'})),null):''}
-function weavingPrepare(a){modal(a.name,`<p>${esc(a.description)}</p><p>Следующая стандартная атака позволит применить магическое умение без дополнительного действия.</p>${a.use_ready?readyFields(current(),a.ready_id):''}`,async()=>api({op:'ability.use',character:current().id,ability:a.id,targets:[],as_reaction:!!a.as_reaction,...readyPayload(a,formObject())}), 'Подготовить')}
+function weavingPrepare(a){modal(a.name,`<p>${esc(a.description)}</p><p>Следующая стандартная атака позволит применить магическое умение без дополнительного действия.</p>${a.use_ready?readyFields(current(),a.ready_id):''}`,async()=>submitAbility({op:'ability.use',character:current().id,ability:a.id,targets:[],as_reaction:!!a.as_reaction,...readyPayload(a,formObject())}), 'Подготовить')}
 function weavingNotice(c){return c.runtime.mystic_weaving?'<p class="notice">Мистическое плетение подготовлено · следующая стандартная атака.</p>':''}
 async function submitAbility(payload){
+ if(sequenceBridge&&pendingAbility?._sequence_spell&&!pendingAbility?._sequence)return submitSequenceSpell(payload);
  if(sequenceCapture&&pendingAbility?._sequence)return submitSequence(payload);
  if(weavingCapture){
   const capture=weavingCapture;

@@ -1,6 +1,6 @@
 function chargedPreparationForm(a){
  const c=current();
- modal(a.name,`<p>${esc(a.description)}</p><p>Следующее умение 1 круга или выше расходует подготовку, в том числе при промахе. Число эффектов определяется Ор в формуле до крита.</p>${a.use_ready?readyFields(c,a.ready_id):''}`,async()=>api({op:'ability.use',character:c.id,ability:a.id,targets:[],...readyPayload(a,formObject())}),'Подготовить');
+ modal(a.name,`<p>${esc(a.description)}</p><p>Следующее умение 1 круга или выше расходует подготовку, в том числе при промахе. Число эффектов определяется Ор в формуле до крита.</p>${a.use_ready?readyFields(c,a.ready_id):''}`,async()=>submitAbility({op:'ability.use',character:c.id,ability:a.id,targets:[],...readyPayload(a,formObject())}),'Подготовить');
 }
 function chargedArrowFields(a){
  const p=a.charged_arrows;if(!p||p.prepare)return '';

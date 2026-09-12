@@ -3941,3 +3941,40 @@ class GameTests(TestCase):
         self.assertEqual(rows[0]['inputs']['weaving']['spell'],spell.name);self.assertNotIn('weaving',rows[1]['inputs'])
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
         self.assertTrue(self.a.runtime.get('mystic_weaving'));self.assertEqual(self.b.runtime['temp'],0)
+
+    def test_nested_spell_series_preview_replays_outer_action_without_spending_it_twice(self):
+        scene,prepare,attack,spell,parent=self.weave_setup()
+        self.a.abilities.add(Entry.objects.create(kind='ability',name='Стремительные удары',data={'category':'passive'}))
+        spell.data.update(damage=True,formula='1к6',attack_sequence={'count':2,'targets':'same'});spell.save()
+        revision=Clock.objects.get(pk=1).revision
+        outer={'character':self.a.pk,'ability':attack.pk,'sequence_revision':revision,'attacks':[{'target':self.b.pk},{'target':self.b.pk}],'completed':0}
+        child={'character':self.a.pk,'ability':spell.pk,'targets':[self.b.pk],
+               'weave_parent':{k:v for k,v in parent.items() if k!='weave'},'before_sequence':outer,
+               'attacks':[{'target':self.b.pk,'outcome':'hit','roll_result':'17; 3'},{'target':self.b.pk}]}
+        before=Event.objects.count()
+        for n in [0,1]:
+            response=self.sequence_preview_request(child,n)
+            self.assertEqual(response.status_code,200,response.content[:1000])
+            actor=next(c for c in response.json()['characters'] if c['id']==self.a.pk)
+            self.assertEqual(actor['runtime']['actions']['main'],0)
+            self.assertEqual(len(response.json()['inputs']['attack_sequence']['attacks']),n)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertTrue(self.a.runtime['mystic_weaving'])
+        self.assertEqual(self.b.runtime['temp'],0);self.assertEqual(Event.objects.count(),before)
+        # Context is bound to the same actor, ability, target and revision.
+        import copy
+        for mutate in [lambda p:p['before_sequence'].update(character=self.b.pk),
+                       lambda p:p['weave_parent'].update(ability=spell.pk),
+                       lambda p:p['weave_parent'].update(targets=[]),
+                       lambda p:p['before_sequence'].update(sequence_revision=revision-1)]:
+            invalid=copy.deepcopy(child);mutate(invalid)
+            self.assertEqual(self.sequence_preview_request(invalid,1).status_code,400)
+        # The final write contains only game actions, never the preview context.
+        spell_payload={k:v for k,v in child.items() if k not in ['before_sequence','weave_parent']}
+        spell_payload['attacks'][1].update(outcome='critical',roll_result='20; 8')
+        self.post(self.alice,{'op':'ability.use',**outer,'attacks':[
+            {'target':self.b.pk,'outcome':'hit','roll_result':'18; 4','weave':spell_payload},
+            {'target':self.b.pk,'outcome':'hit','roll_result':'19; 5'}]})
+        self.assertEqual(Event.objects.count(),before+1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertTrue(self.a.runtime['mystic_weaving']);self.assertEqual(self.b.runtime['temp'],0)

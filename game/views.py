@@ -1018,38 +1018,52 @@ def thrown_preview(request):
     except (ValueError,TypeError) as e:return JsonResponse({'error':str(e)},status=400)
 
 
+def simulate_sequence(user,p,revision,depth=0):
+    """Compose read-only previews, including a spell inside an unfinished series."""
+    if depth>4 or not isinstance(p,dict):raise ValueError('Некорректная вложенная последовательность')
+    owned(user,p.get('character'))
+    completed=p.get('completed');rows=p.get('attacks')
+    if not isinstance(rows,list) or type(completed) is not int or not 0<=completed<=len(rows):
+        raise ValueError('Укажите завершённые атаки последовательности')
+    if type(p.get('sequence_revision')) is not int or p['sequence_revision']!=revision:
+        raise ValueError('Бой изменился. Обновите план атак.')
+    parent=p.get('weave_parent');context=p.get('before_sequence')
+    if parent is not None and not isinstance(parent,dict):raise ValueError('Некорректная атака плетения')
+    if context is not None:
+        if not isinstance(context,dict) or parent is None or context.get('character')!=p['character']:
+            raise ValueError('Контекст должен принадлежать серии того же персонажа')
+        simulate_sequence(user,context,revision,depth+1)
+        index=context['completed'];planned_rows=context['attacks']
+        if index>=len(planned_rows):raise ValueError('В серии нет следующей атаки')
+        target=planned_rows[index].get('target')
+        if parent.get('ability')!=context.get('ability') or parent.get('targets',[])!=([] if target is None else [target]):
+            raise ValueError('Плетение должно продолжать выбранный удар серии')
+    planned=[]
+    for index,row in enumerate(rows):
+        if not isinstance(row,dict):raise ValueError('Некорректная атака')
+        if index<completed:planned.append(copy.deepcopy(row))
+        else:
+            planned.append({k:copy.deepcopy(v) for k,v in row.items() if k in ['target','external_target']})
+            planned[-1].update(outcome='miss',roll_result='Не выполнено')
+    child={k:v for k,v in p.items() if k not in ['weave_parent','before_sequence']}
+    child.update(op='ability.use',attacks=planned)
+    payload={**parent,'op':'ability.use','character':p['character'],'sequence_revision':revision,'weave':child} if parent is not None else child
+    change=use_ability(user,payload,preview_steps=completed,sequence_step=context is not None)
+    change.finish(defer_record=True)
+    return change,(change.inputs['weaving']['inputs'] if parent is not None else change.inputs)
+
+
 @login_required
 @require_POST
 def sequence_preview(request):
-    """Replay a completed prefix under a savepoint; never commit a game change."""
+    """Replay under a savepoint; never commit a game change."""
     try:
         p=json.loads(request.body)
-        if not isinstance(p,dict):raise ValueError('Некорректный запрос')
-        owned(request.user,p.get('character'))
-        completed=p.get('completed');rows=p.get('attacks')
-        if not isinstance(rows,list) or type(completed) is not int or not 0<=completed<=len(rows):
-            raise ValueError('Укажите завершённые атаки последовательности')
-        planned=[]
-        for index,row in enumerate(rows):
-            if not isinstance(row,dict):raise ValueError('Некорректная атака')
-            if index<completed:planned.append(copy.deepcopy(row))
-            else:
-                # Unrolled attacks only describe intended recipients. No random
-                # results are generated or presented as actual physical rolls.
-                planned.append({k:copy.deepcopy(v) for k,v in row.items() if k in ['target','external_target']})
-                planned[-1].update(outcome='miss',roll_result='Не выполнено')
         with transaction.atomic():
             clock=Clock.objects.select_for_update().get(pk=1)
-            if type(p.get('sequence_revision')) is not int or p['sequence_revision']!=clock.revision:
-                raise ValueError('Бой изменился. Обновите план атак.')
-            child={**p,'op':'ability.use','attacks':planned}
-            parent=child.pop('weave_parent',None)
-            if parent is not None and not isinstance(parent,dict):raise ValueError('Некорректная атака плетения')
-            payload={**parent,'op':'ability.use','character':p['character'],'sequence_revision':p['sequence_revision'],'weave':child} if parent is not None else child
-            change=use_ability(request.user,payload,preview_steps=completed)
-            scene=change.scene
-            result={'revision':clock.revision,'completed':completed,'inputs':change.inputs['weaving']['inputs'] if parent is not None else change.inputs,
-                    'characters':[serialize_char(c,request.user) for c in Character.objects.filter(pk__in=scene.state['order'])]}
+            change,inputs=simulate_sequence(request.user,p,clock.revision)
+            result={'revision':clock.revision,'completed':p['completed'],'inputs':inputs,
+                    'characters':[serialize_char(c,request.user) for c in Character.objects.filter(pk__in=change.scene.state['order'])]}
             transaction.set_rollback(True)
         return JsonResponse(result)
     except Http404:return JsonResponse({'error':'Запись не найдена'},status=404)
