@@ -5,7 +5,7 @@ STATUS = {'Поджог':('status',1),'Влага':('status',1),'Кислота'
           'Мороз':('speed',-1),'Яд':('status',1),'Благословение':('hit',1),'Проклятье':('hit',-1),
           'Ослабление':('damage',-1),'Замедление':('speed',-1),'Оглушение':('status',1),
           'Кровотечение':('status',1),'Продолжительный урон':('status',1),'Сон':('status',1),'Страх':('status',1),
-          'Обездвижен':('status',1),'Ослепление':('status',1),'Метка':('status',1),'БП':('target_hit',1),'Сбит с ног':('status',1),'Насыщение':('status',1)}
+          'Обездвижен':('status',1),'Ослепление':('status',1),'Метка':('status',1),'БП':('target_hit',1),'Сбит с ног':('status',1),'Насыщение':('status',1),'Рассеивание':('status',1)}
 NEUTRAL=[('Поджог','Влага'),('Поджог','Мороз'),('Кислота','Шок'),('Благословение','Проклятье'),('Мороз','Яд')]
 CONSTRUCTIVE=[('Благословение','Поджог','Священное пламя'),('Благословение','Яд','Вирус'),('Благословение','Мороз','Чистые льды'),
  ('Благословение','Влага','Очищение'),('Влага','Кислота','Взрыв'),('Влага','Шок','Оцепенение'),('Влага','Мороз','Заморозка'),
@@ -30,11 +30,12 @@ def reaction_options(target, incoming):
         result=next(('Нейтрализация' for a,b in NEUTRAL if {a,b}=={name,other}),None)
         result=result or next((r for a,b,r in CONSTRUCTIVE if {a,b}=={name,other}),None)
         if name=='Насыщение' and other in ELEMENTAL: result='Насыщение'
+        if name=='Рассеивание' and other in ['Поджог','Влага','Кислота','Яд','Мороз']:result='Рассеивание'
         if result: options.append({'key':old['key'],'name':result,'effect':old})
     return options
 
 
-def apply_status(target, incoming, choice=None, *, change=None, roll=None):
+def apply_status(target, incoming, choice=None, *, change=None, roll=None, spread=None):
     from .rules import put_effect
     name=status_name(incoming)
     options=reaction_options(target,incoming)
@@ -42,6 +43,10 @@ def apply_status(target, incoming, choice=None, *, change=None, roll=None):
         selected=next((o for o in options if o['key']==choice),None)
         if not selected: raise ValueError('Выберите стихийную реакцию для '+target.name)
         old=selected['effect'];result=selected['name']
+        if result=='Рассеивание':
+            from .dispersion import apply
+            apply(change,target,incoming,old,spread)
+            return
         strength=abs(old['value'])+abs(incoming['value'])
         if result in ['Взрыв','Проклятый разряд','Ледяная тьма']:
             damage=strength
@@ -74,7 +79,7 @@ def apply_status(target, incoming, choice=None, *, change=None, roll=None):
         if result=='Некропламя':incoming['note']=f'В начале хода: {strength*2} продолжительного урона. ХП вносит мастер.'
         if result in ['Священное пламя','Вирус']:incoming['note']=f'В начале хода цели: {strength} урона Вокруг 1. ХП вносит мастер.'
         if result=='Размякшая плоть': incoming.update(stat='damage',value=-strength)
-    elif name=='Насыщение':
+    elif name in ['Насыщение','Рассеивание']:
         return
     elif name:
         incoming['key']='status:'+name

@@ -559,7 +559,7 @@ def execute(user, p):
         if p.get('remove'):
             c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if e.get('key')!=p.get('effect_key')]
         else:
-            apply_status(c,effect,p.get('reaction'),change=change,roll=p.get('reaction_roll'))
+            apply_status(c,effect,p.get('reaction'),change=change,roll=p.get('reaction_roll'),spread=p.get('spread'))
         change.finish()
     elif op == 'check.roll':
         c=owned(user,p['character'])
@@ -780,6 +780,7 @@ def use_ability(user, p, embedded=False):
         if needs_roll and not str(p.get('roll_result', '')).strip():
             raise ValueError('Введите результат физического броска. Действие пока не применено.')
     pool_targets={t.id:t for t in Character.objects.filter(id__in=scene.state['order'])}
+    pool_targets[c.pk]=c
     pool=roll_pools.resolve(a,p,pool_targets) if not aura else None
     if pool and p.get('outcome','hit')!='hit':raise ValueError('Для этого умения используется распределение, без броска попадания')
     ids = list(dict.fromkeys(int(i) for i in p.get('targets', [])))
@@ -798,6 +799,7 @@ def use_ability(user, p, embedded=False):
     stance=stances.activation(c,a,p) if not aura else None
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.display_name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
+    change.effect_targets=pool_targets
     change.watch(c)
     if not aura and not embedded:change.action(c,'reaction' if p.get('as_reaction') else d.get('action','main'))
     if p.get('support_minor'):
@@ -874,7 +876,7 @@ def use_ability(user, p, embedded=False):
                     if aura:
                         put_effect(t,effect)
                     else:
-                        apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'),change=change,roll=p.get('reaction_rolls',{}).get(f'{pk}:{index}'))
+                        apply_status(t,effect,p.get('reactions',{}).get(f'{pk}:{index}'),change=change,roll=p.get('reaction_rolls',{}).get(f'{pk}:{index}'),spread=p.get('spreads',{}).get(f'{pk}:{index}'))
     if not aura:seeking_arrows.record(change,c,a,scene,computed(c),p,ids)
     charged_arrows.apply(change,c,a,targets,charged,p)
     prepared_attacks.apply(change,c,a,targets,setup)

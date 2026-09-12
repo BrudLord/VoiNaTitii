@@ -3021,3 +3021,69 @@ class GameTests(TestCase):
         self.assertEqual(forced(self.b,5)['blocked'],'Обездвижен')
         self.turn(scene,self.alice);self.turn(scene,self.bob);self.b.refresh_from_db()
         self.assertEqual(forced(self.b,5),{'cells':5})
+
+    def dispersion_setup(self, old='Поджог'):
+        p=self.instant_reaction_setup(old,'Рассеивание')
+        self.b.refresh_from_db();self.b.runtime['effects'][0]['value']=4 if old=='Поджог' else -4
+        self.b.runtime['effects'][0]['remaining']=1;self.b.save()
+        return {**p,'spreads':{f'{self.b.pk}:0':{'targets':[self.a.pk],'in_range':True}}}
+
+    def test_dispersion_preserves_strength_refreshes_recipient_and_undoes_all(self):
+        p=self.dispersion_setup();self.post(self.alice,p)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        effect=self.a.runtime['effects'][0]
+        self.assertEqual((effect['value'],effect['remaining']),(4,3))
+        self.assertEqual(self.b.runtime['effects'][0]['remaining'],1)
+        row=Event.objects.latest('id').inputs['dispersions'][0]
+        self.assertEqual((row['strength'],row['radius']),(4,3))
+        self.assertEqual(self.a.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'],[])
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'][0]['value'],4)
+
+    def test_dispersion_recipient_reactions_and_rollback(self):
+        p=self.dispersion_setup('Кислота')
+        self.a.refresh_from_db();self.a.runtime['effects']=[{'key':'curse','name':'Проклятье','stat':'hit','value':-2,'duration':'turns','remaining':2}];self.a.save()
+        # Acid + curse creates softened flesh, with the original negative acid strength.
+        spread=p['spreads'][f'{self.b.pk}:0'];spread['remove_source']=True
+        self.post(self.alice,p,400)
+        self.b.refresh_from_db();self.assertEqual(len(self.b.runtime['effects']),1)
+        spread['reactions']={str(self.a.pk):'curse'}
+        self.post(self.alice,p)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'][0]['name'],'Размякшая плоть')
+        self.assertEqual(self.a.runtime['effects'][0]['value'],-6)
+        self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_dispersion_rejects_invalid_area_and_targets_atomically(self):
+        p=self.dispersion_setup();key=f'{self.b.pk}:0';count=Event.objects.count()
+        for spread in [{},{'in_range':True,'targets':[self.b.pk]},{'in_range':True,'targets':[999999]},
+                       {'in_range':True,'targets':[self.a.pk,self.a.pk]},{'in_range':True,'targets':[True]}]:
+            self.post(self.alice,{**p,'spreads':{key:spread}},400)
+            self.assertEqual(Event.objects.count(),count)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['effects'],[])
+
+    def test_dispersion_without_eligible_effect_does_not_persist(self):
+        p=self.dispersion_setup();self.b.runtime['effects']=[];self.b.save()
+        self.post(self.alice,{k:v for k,v in p.items() if k!='spreads'})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_manual_dispersion_records_external_recipients_and_source_removal(self):
+        self.dispersion_setup()
+        self.post(self.gm,{'op':'effect.apply','character':self.b.pk,'name':'Рассеивание','value':2,'turns':3,
+            'reaction':'old','spread':{'in_range':True,'targets':[],'external':True,'remove_source':True}})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+        row=Event.objects.latest('id').inputs['dispersions'][0]
+        self.assertTrue(row['external']);self.assertEqual(row['radius'],2)
+
+    def test_dispersion_recipient_can_be_a_later_primary_target(self):
+        p=self.dispersion_setup();a=Entry.objects.get(pk=p['ability']);a.data['target']='multiple';a.save()
+        p['targets']=[self.b.pk,self.a.pk]
+        p['reactions'][f'{self.a.pk}:0']='status:Поджог'
+        p['spreads'][f'{self.a.pk}:0']={'targets':[],'in_range':True,'remove_source':True}
+        self.post(self.alice,p)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['effects'],[])
+        self.assertEqual(len(Event.objects.latest('id').inputs['dispersions']),2)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'],[])
