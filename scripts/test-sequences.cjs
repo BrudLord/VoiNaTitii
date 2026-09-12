@@ -59,3 +59,13 @@ test('canceling a woven spell during preview cannot restore its abandoned outer 
  const pending=t.ctx.submitSequenceSpell({ability:9});t.ctx.clearSequence();finish({ok:true,json:async()=>t.ctx.response});await pending;
  assert.equal(t.run('sequenceCapture'),null);assert.equal(t.ctx.writes.length,0);
 });
+test('reload confirmation belongs to the chosen shot and is removed when unchecked',async()=>{
+ const t=setup();t.run("sequenceCapture={index:1,root:{character:1,ability:7},plan:[{target:2,roll_result:'18'},{target:2}],forms:[]}");
+ t.ctx.formObject=()=>({series_reload:'on'});await t.ctx.submitSequence({outcome:'hit',roll_result:'19'});assert.equal(t.ctx.request.body.attacks[1].reload_before,true);assert.equal(t.ctx.request.body.attacks[0].reload_before,undefined);
+ t.ctx.formObject=()=>({});await t.ctx.submitSequence({outcome:'hit',roll_result:'19'});assert.equal(t.ctx.request.body.attacks[1].reload_before,undefined);assert.equal(t.ctx.writes.length,0);
+});
+test('reload prompt only appears for a discharged weapon attack',()=>{
+ const t=setup(),c={calc:{needs_reload:true,reload_action:'minor'},runtime:{actions:{minor:1}}};
+ assert.match(t.ctx.sequenceReload({data:{weapon:true}},c),/required/);assert.match(t.ctx.sequenceReload({data:{weapon:true}},c),/малое действие \(1\)/);
+ assert.equal(t.ctx.sequenceReload({data:{damage:true}},c),'');c.calc.needs_reload=false;assert.equal(t.ctx.sequenceReload({data:{weapon:true}},c),'');
+});

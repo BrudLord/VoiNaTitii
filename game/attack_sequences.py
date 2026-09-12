@@ -144,7 +144,7 @@ STEP_FIELDS = {
     'number', 'target', 'external_target', 'outcome', 'roll_result', 'reactions',
     'reaction_rolls', 'spreads', 'external_bp', 'external_conductor', 'external_prone',
     'mark_source_included', 'mystic_arrows', 'charged_arrows', 'charged_target',
-    'exhaustion_target', 'miss_damage', 'movement_before', 'movement_after', 'weave',
+    'exhaustion_target', 'miss_damage', 'movement_before', 'movement_after', 'weave', 'reload_before',
 }
 
 
@@ -218,8 +218,19 @@ def execute(user, payload, character, ability, scene, *, drawn=None, embedded=Fa
     executed = ordered['attacks'] if preview_steps is None else ordered['attacks'][:preview_steps]
     for index, step in enumerate(executed):
         current = change.objects['character:' + str(character.pk)]
+        reloaded=None
+        if 'reload_before' in step:
+            if type(step['reload_before']) is not bool:raise ValueError('Подтвердите перезарядку')
+            if step['reload_before']:
+                from .weaponry import reload_weapon
+                from .rules import computed
+                if not ability.data.get('weapon'):raise ValueError('Перезарядка доступна перед атакой оружием')
+                reload_change=reload_weapon(user,{'character':character.pk,'item':computed(current)['weapon_id']},embedded=True)
+                change.absorb(reload_change);reloaded=reload_change.inputs
+                change.inputs.setdefault('periodic_damage',[]).extend(reloaded.get('periodic_damage',[]))
+                current=change.objects['character:' + str(character.pk)]
         moved = move_step(change, current, step, ordered['profile'], moved, 'before')
-        args = {k: copy.deepcopy(v) for k, v in step.items() if k not in {'number', 'target', 'external_target', 'movement_before', 'movement_after', '_movement_log'}}
+        args = {k: copy.deepcopy(v) for k, v in step.items() if k not in {'number', 'target', 'external_target', 'movement_before', 'movement_after', '_movement_log', 'reload_before'}}
         args.update(op='ability.use', character=character.pk, ability=ability.pk,
                     targets=[] if step['target'] is None else [step['target']],
                     support_minor=bool(payload.get('support_minor')))
@@ -239,6 +250,7 @@ def execute(user, payload, character, ability, scene, *, drawn=None, embedded=Fa
         change.inputs['attack_sequence']['attacks'].append({
             'number': index + 1, 'target': step['target'], 'external_target': step['external_target'],
             'inputs': copy.deepcopy(child.inputs), 'movement': step.get('_movement_log', []),
+            **({'reload':reloaded} if reloaded else {}),
         })
     current = change.objects['character:' + str(character.pk)]
     # Keep the existing journal useful while preserving full per-step metadata

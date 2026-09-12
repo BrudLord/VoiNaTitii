@@ -104,7 +104,7 @@ def reload_action(data):
     return ''
 
 
-def reload_weapon(user,p):
+def reload_weapon(user,p,*,embedded=False):
     from .views import owned
     from .rules import computed, current_scene, Change
     from .statuses import status_name
@@ -124,7 +124,9 @@ def reload_weapon(user,p):
         change.watch(c).runtime['actions'][action]-=1
         change.action(c,action)
     change.watch(item).data['needs_reload']=False
-    change.finish()
+    change.inputs['reload']={'item':item.pk,'name':item.name,'action':calc['reload_action']}
+    change.finish(defer_record=embedded)
+    return change
 
 
 def discharge(change,c,ability):

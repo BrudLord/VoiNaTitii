@@ -3978,3 +3978,39 @@ class GameTests(TestCase):
         self.assertEqual(Event.objects.count(),before+1)
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
         self.assertEqual(self.a.runtime['actions']['main'],1);self.assertTrue(self.a.runtime['mystic_weaving']);self.assertEqual(self.b.runtime['temp'],0)
+
+    def test_sequence_reload_spends_minor_once_and_undo_restores_weapon(self):
+        a,p=self.sequence_setup(weapon=True,formula='1Ор')
+        item=Item.objects.create(character=self.a,equipped=True,name='Арбалет',data={'item_type':'weapon','dice':'1к6','no_proficiency':True,'keywords':['Перезарядка малым']})
+        p['attacks'][1]['reload_before']=True
+        count=Event.objects.count();revision=Clock.objects.get(pk=1).revision
+        preview=self.sequence_preview_request(p,2);self.assertEqual(preview.status_code,200,preview.content[:500])
+        item.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(item.data.get('needs_reload'));self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.assertEqual(Event.objects.count(),count);self.assertEqual(Clock.objects.get(pk=1).revision,revision)
+        self.post(self.alice,p);item.refresh_from_db();self.a.refresh_from_db()
+        self.assertTrue(item.data['needs_reload']);self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertEqual(Event.objects.count(),count+1)
+        self.assertEqual(Event.objects.latest('id').inputs['attack_sequence']['attacks'][1]['reload']['reload']['item'],item.pk)
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(item.data.get('needs_reload'));self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.post(self.alice,{'op':'redo'});item.refresh_from_db();self.a.refresh_from_db()
+        self.assertTrue(item.data['needs_reload']);self.assertEqual(self.a.runtime['actions']['minor'],0)
+
+    def test_sequence_reload_failure_rolls_back_all_shots(self):
+        a,p=self.sequence_setup(weapon=True,formula='1Ор',attack_sequence={'count':3,'targets':'same'})
+        item=Item.objects.create(character=self.a,equipped=True,name='Арбалет',data={'item_type':'weapon','dice':'1к6','no_proficiency':True,'keywords':['Перезарядка малым']})
+        p['attacks'][1]['reload_before']=True;p['attacks'].append(dict(p['attacks'][1]))
+        count=Event.objects.count();self.post(self.alice,p,400);item.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(item.data.get('needs_reload'));self.assertEqual(self.a.runtime['actions']['minor'],1);self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.assertEqual(Event.objects.count(),count)
+        p['attacks'][1]['reload_before']='yes';self.post(self.alice,p,400)
+
+    def test_sequence_reload_records_its_own_periodic_action_damage(self):
+        a,p=self.sequence_setup(weapon=True,formula='1Ор')
+        Item.objects.create(character=self.a,equipped=True,name='Арбалет',data={'item_type':'weapon','dice':'1к6','no_proficiency':True,'keywords':['Перезарядка малым']})
+        self.a.refresh_from_db();self.a.runtime['effects']=[{'name':'Гипертермия','stat':'status','value':3,'duration':'battle'}];self.a.save()
+        p['attacks'][1]['reload_before']=True
+        self.post(self.alice,p)
+        rows=Event.objects.latest('id').inputs['periodic_damage']
+        self.assertEqual([(r['action'],r['damage']) for r in rows],[('main',3),('minor',3)])
