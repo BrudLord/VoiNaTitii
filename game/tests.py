@@ -2928,3 +2928,42 @@ class GameTests(TestCase):
         a,p=self.personal_ability_payload();self.post(self.alice,p);self.a.refresh_from_db();personal=self.a.personal_abilities.get()
         self.post(self.alice,{'op':'character.save','id':self.a.pk,'revision':self.a.revision,'name':self.a.name,'abilities':[a.pk,personal.pk]})
         self.assertEqual(list(self.a.abilities.values_list('pk',flat=True)),[personal.pk])
+
+    def test_blindness_is_a_roll_condition_without_changing_flat_hit_bonus(self):
+        from .targeting import resolve,roll_conditions
+        from .views import serialize_char
+        a=Entry.objects.create(kind='ability',name='Стрела',data={'category':'active','damage':True,'formula':'1к6','keywords':['Дальнобойный 5']})
+        self.a.abilities.add(a)
+        self.a.runtime['effects']=[{'key':'blind','name':'Ослепление','stat':'status','value':1,'duration':'turns','remaining':1}];self.a.save()
+        row=next(x for x in serialize_char(self.a,self.alice)['abilities'] if x['id']==a.pk)
+        self.assertEqual(row['roll_conditions'],['Помеха на попадание: Ослепление'])
+        self.assertEqual(row['hit_bonus'],0)
+        attack=resolve(self.a,a,computed(self.a),[self.b],{})[0]
+        self.assertEqual(attack['roll_conditions'],row['roll_conditions']);self.assertEqual(attack['hit'],0)
+        self.assertEqual(roll_conditions(Entry(data={'effects':[{'stat':'hp','value':5}]}),computed(self.a)),[])
+        a.data['automatic_hit']=True;self.assertEqual(roll_conditions(a,computed(self.a)),[])
+
+    def test_blindness_expiry_and_undo_update_roll_conditions(self):
+        from .targeting import roll_conditions
+        scene=self.start();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'blind','name':'Ослепление','stat':'status','value':1,'duration':'turns','remaining':1}];self.a.save()
+        a=Entry(data={'damage':True})
+        self.assertTrue(roll_conditions(a,computed(self.a)))
+        self.turn(scene,self.alice);self.a.refresh_from_db();self.assertEqual(roll_conditions(a,computed(self.a)),[])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertTrue(roll_conditions(a,computed(self.a)))
+
+    def test_blind_disarm_records_disadvantage_with_physical_roll(self):
+        held,p=self.disarm_setup();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'blind','name':'Ослепление','stat':'status','value':1,'duration':'turns','remaining':3}];self.a.save()
+        self.post(self.alice,p)
+        event=Event.objects.latest('id')
+        self.assertEqual(event.inputs['attack_targets'][0]['roll_conditions'],['Помеха на попадание: Ослепление'])
+        self.assertEqual(event.inputs['roll_result'],'16')
+
+    def test_book_automatic_hit_ignores_secondary_automatic_effects(self):
+        from .book_audit import abilities
+        from django.conf import settings
+        rows={name:data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text())}
+        self.assertTrue(rows['Морозный кристалл']['automatic_hit'])
+        self.assertFalse(rows['Гейзер']['automatic_hit'])
+        self.assertFalse(rows['Свет и Тьма']['automatic_hit'])

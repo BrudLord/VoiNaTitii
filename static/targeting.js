@@ -31,8 +31,8 @@ function attackTargetPreview(a){
  const ids=checks('targets'),sign=n=>(n>=0?'+':'')+n;
  return (ids.length?ids.map(id=>byId(S.characters,id)):[null]).map(t=>{
  const bonus=t?targetHitBonus(a,t):Number(formObject().external_bp||0)+(formObject().external_prone&&(a.data.keywords||[]).some(w=>/^Ближний(?:\s|$)/.test(w))?2:0),penalty=markPenalty(),total=a.hit_bonus+bonus+penalty;
- return `<div>${esc(t?t.name:'Цель на игровом поле')}: попадание <strong>${sign(total)}</strong>${penalty?' (метка −3)':''}${bonus?' (бонус цели '+sign(bonus)+')':''}${a.armored_hit_bonus!=null?' · по броне '+sign(a.armored_hit_bonus+bonus+penalty):''}<br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong></div>`;
+ return `<div>${(a.roll_conditions||[]).length?'<strong>'+esc(a.roll_conditions.join(' · '))+'</strong><br>':''}${esc(t?t.name:'Цель на игровом поле')}: попадание <strong>${sign(total)}</strong>${penalty?' (метка −3)':''}${bonus?' (бонус цели '+sign(bonus)+')':''}${a.armored_hit_bonus!=null?' · по броне '+sign(a.armored_hit_bonus+bonus+penalty):''}<br>Формула <strong>${esc(targetDamageFormula(a,t))}</strong></div>`;
  }).join('');
 }
-function attackTargetLog(rows){return (rows||[]).map(r=>'<br>'+esc(r.name+': попадание '+(r.hit>=0?'+':'')+r.hit+(r.mark_penalty?' · метка '+r.mark_penalty:'')+(r.target_bonus?' · бонус цели '+r.target_bonus:'')+(r.armored_hit!=null?' · по броне '+r.armored_hit:'')+(r.damage?' · формула '+r.damage:''))).join('')}
+function attackTargetLog(rows){return (rows||[]).map(r=>'<br>'+esc(r.name+': попадание '+(r.hit>=0?'+':'')+r.hit+(r.mark_penalty?' · метка '+r.mark_penalty:'')+(r.target_bonus?' · бонус цели '+r.target_bonus:'')+(r.armored_hit!=null?' · по броне '+r.armored_hit:'')+(r.damage?' · формула '+r.damage:'')+(r.roll_conditions?.length?' · '+r.roll_conditions.join(' · '):''))).join('')}
 document.addEventListener('input',e=>{if(['external_bp','external_prone','external_conductor','mark_source_included'].includes(e.target.name))updateAttackPreview()});

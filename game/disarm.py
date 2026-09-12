@@ -13,7 +13,7 @@ def profile(c,calc,scene):
     if 'Захват' not in calc['weapon_keywords']:return None
     calc={**calc,'massive_strikes':False}
     a=attack(calc)
-    return {'reason':availability(c,a,scene,calc),'hit':targeting.hit_bonus(c,a,calc),'keywords':a.data['keywords']}
+    return {'roll_conditions':targeting.roll_conditions(a,calc),'reason':availability(c,a,scene,calc),'hit':targeting.hit_bonus(c,a,calc),'keywords':a.data['keywords']}
 
 
 def apply(user,p):

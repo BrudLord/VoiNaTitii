@@ -19,6 +19,13 @@ def physical_weapon_units(ability,calc):
     return units if str(units) in terms else 0
 
 
+def roll_conditions(ability,calc):
+    from .statuses import status_name
+    if not (ability.data.get('weapon') or ability.data.get('damage')) or ability.data.get('automatic_hit'):
+        return []
+    return ['Помеха на попадание: Ослепление'] if any(status_name(e)=='Ослепление' for e in calc['effects']) else []
+
+
 def hit_bonus(character, ability, calc):
     value=enchantments.ability_bonus(calc,ability,'hit')+ability.data.get('attack_hit_bonus',0)
     value+=sum(p.get('hit',0) for p in enchantments.for_ability(calc,ability))
@@ -71,7 +78,7 @@ def resolve(character,ability,calc,targets,payload):
         damage=formula(character,ability,payload.get('outcome')=='critical',calc)
         bonus=target_hit_bonus(effects,ability,calc) if target else external
         result.append({'id':target.pk if target else None,'name':target.name if target else 'Цель на игровом поле',
-                       'hit':base+bonus,'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
+                       'hit':base+bonus,'roll_conditions':roll_conditions(ability,calc),'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
                        'damage':damage+(f' +{extra} [БП]' if extra else '')+(f' +{conductor_bonus:g} [Сверхпроводник]' if conductor_bonus else ''),
                        'armored_hit':base+bonus+calc['armored_hit'] if ability.data.get('weapon') and calc['armored_hit'] else None})
     return result

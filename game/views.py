@@ -115,7 +115,7 @@ def serialize_char(c, user):
         minor_attack=stances.minor_attack(c,a)
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'definition':definition,'id': a.id, 'name': a.display_name, 'description': a.description, 'data': d,
-                          'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
+                          'roll_conditions':targeting.roll_conditions(a,calc),'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
                           'attack_setup':setup, 'charged_arrows':charged,
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
                           'weavable':weaving.magical(a),'weaving_area':weaving.area(a),
@@ -723,6 +723,7 @@ def validate_entry(d):
     if type(d.get('attack_hit_bonus',0)) is not int:
         raise ValueError('Бонус попадания умения должен быть целым числом')
     bounded(d.get('attack_hit_bonus',0),-1000,1000)
+    if type(d.get('automatic_hit',False)) is not bool:raise ValueError('Укажите, попадает ли умение автоматически')
     if type(d.get('damage_from_bp',False)) is not bool:
         raise ValueError('Укажите, зависит ли урон от БП')
     for field in ['keywords', 'requires','subraces','allowed_schools','families']:
