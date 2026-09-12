@@ -1545,3 +1545,103 @@ class GameTests(TestCase):
         self.post(self.alice,{**frost,'reactions':{key:'bless'}})
         self.b.refresh_from_db()
         self.assertTrue(any(e.get('status')=='Чистые льды' for e in self.b.runtime['effects']))
+
+    def book_row(self,name):
+        from pathlib import Path
+        from .book_audit import abilities
+        return next((desc,data,source) for n,desc,data,source in abilities(Path('rules/player-book.txt').read_text()) if n==name)
+
+    def test_book_literal_effects_use_local_durations_and_recipient_scope(self):
+        for name in ['Отравленный дротик','Ослабление']:
+            _,data,_=self.book_row(name)
+            self.assertEqual(data['effects'][0]['turns'],1)
+        _,data,_=self.book_row('Слепота')
+        self.assertEqual(data['target'],'multiple')
+        self.assertEqual({e['name']:e['turns'] for e in data['effects']},{'Проклятье':3,'Ослепление':1})
+        _,data,_=self.book_row('Благословение')
+        self.assertTrue(any(e['stat']=='temp' and e['value']==5 for e in data['effects']))
+        self.assertTrue(any(e['stat']=='damage' and e['value']==1 and e['duration']=='battle' for e in data['effects']))
+        self.assertTrue(any(e['stat']=='hit' and e['turns']==3 for e in data['effects']))
+        for name in ['Болотная тень','Атака тотема','Огненная стена']:
+            _,data,_=self.book_row(name);self.assertNotIn('effects',data)
+        _,data,_=self.book_row('Кислотный выброс')
+        self.assertEqual([e['name'] for e in data['effects']],['Оглушение'])
+        self.assertEqual(data['effects'][0]['duration'],'actions')
+        _,data,_=self.book_row('Жидкое пламя')
+        self.assertEqual(data['formula'],'1к8');self.assertTrue(data['damage'])
+        self.assertEqual(data['target'],'multiple')
+
+    def test_imported_one_turn_slow_expires_on_target_turn_and_can_be_undone(self):
+        desc,data,source=self.book_row('Отравленный дротик')
+        ability=Entry.objects.create(kind='ability',name='Отравленный дротик',description=desc,data=data,source=source)
+        self.a.abilities.add(ability);self.a.level=8;self.a.save()
+        scene=self.start()
+        before=computed(self.b)['speed']
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':ability.id,'targets':[self.b.id],'outcome':'hit','roll_result':'Попадание 16, урон 5'})
+        self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],before-2)
+        self.turn(scene,self.alice);self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],before-2)
+        self.turn(scene,self.bob);self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],before)
+        self.post(self.bob,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(computed(self.b)['speed'],before-2)
+
+    def test_imported_area_effect_applies_to_multiple_selected_targets(self):
+        desc,data,source=self.book_row('Лунный свет')
+        ability=Entry.objects.create(kind='ability',name='Лунный свет',description=desc,data=data,source=source)
+        self.a.abilities.add(ability);self.a.level=8;self.a.save();self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':ability.id,'targets':[self.a.id,self.b.id],'roll_result':'Броски попадания 15 и 16, урон 5'})
+        for c in [self.a,self.b]:
+            c.refresh_from_db();self.assertTrue(any(e['name']=='Ослабление' and e['value']==-2 for e in c.runtime['effects']))
+        self.post(self.alice,{'op':'undo'})
+        for c in [self.a,self.b]:c.refresh_from_db();self.assertEqual(c.runtime['effects'],[])
+
+    def test_reimport_removes_old_wrong_effects_and_preserves_master_edits(self):
+        from django.core.management import call_command
+        from io import StringIO
+        for name in ['Болотная тень','Атака тотема']:
+            desc,data,source=self.book_row(name)
+            Entry.objects.create(kind='ability',name=name,description=desc,source=source,data={**data,'book_compiled':1,'target':'single','effects':[{'stat':'status','value':99}]})
+        desc,data,source=self.book_row('Отравленный дротик')
+        edited=Entry.objects.create(kind='ability',name='Отравленный дротик',source=source,data=data)
+        custom={**data,'effects':[{'stat':'speed','value':-7,'turns':2}]}
+        self.post(self.gm,{'op':'entry.save','id':edited.id,'kind':'ability','name':edited.name,'description':'Правка мастера','data':custom})
+        call_command('audit_book',stdout=StringIO())
+        for name in ['Болотная тень','Атака тотема']:
+            row=Entry.objects.get(kind='ability',name=name)
+            self.assertNotIn('effects',row.data);self.assertNotIn('target',row.data)
+        edited.refresh_from_db();self.assertEqual(edited.description,'Правка мастера')
+        self.assertEqual(edited.data['effects'],custom['effects']);self.assertTrue(edited.data['reviewed'])
+
+    def test_end_of_current_turn_is_distinct_from_one_target_turn(self):
+        desc,data,source=self.book_row('Свет')
+        # This literal ally bonus expires with the acting character's turn.
+        self.assertEqual(data['effects'][0]['duration'],'current_turn')
+        ability=Entry.objects.create(kind='ability',name='Свет',description=desc,data=data,source=source)
+        self.a.abilities.add(ability);self.a.level=8;self.a.save();scene=self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':ability.id,'targets':[self.b.id]})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],2)
+        self.turn(scene,self.alice);self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],2)
+
+    def test_literal_import_does_not_truncate_variable_strength_or_merge_recipient_groups(self):
+        from .book_effects import literal_effects
+        for desc in ['Цель получает Продолжительный урон 2\\*Мод.', 'Цель получает Кровотечение 2к4.',
+                     'Цель получает Метка Порчи на 3 хода.']:
+            self.assertEqual(literal_effects(desc)[0],[])
+        effects,target=literal_effects('Цель получает Оглушение 2. Цели вокруг получают Мороз 3.')
+        self.assertEqual([e['name'] for e in effects],['Оглушение']);self.assertEqual(target,'single')
+        effects,_=literal_effects('Цель получает -2 КД на 1 ход.')
+        self.assertEqual(effects[0]['stat'],'ac');self.assertEqual(effects[0]['turns'],1)
+
+    def test_damage_without_the_word_damage_and_escaped_modifier_multiplier(self):
+        _,data,_=self.book_row('Каменные шипы')
+        self.assertEqual(data['formula'],'2к6+Мод');self.assertTrue(data['damage'])
+        _,data,_=self.book_row('Морозное касание')
+        self.assertEqual(data['formula'],'1к6+2*Мод');self.assertTrue(data['damage'])
+
+    def test_modifier_multipliers_are_calculated_without_critical_multiplication(self):
+        desc,data,source=self.book_row('Струя пламени')
+        data['stat']='cha'
+        ability=Entry.objects.create(kind='ability',name='Струя пламени',description=desc,data=data)
+        self.assertEqual(formula(self.a,ability),'1к6+6')
+        self.assertEqual(formula(self.a,ability,True),'2к6+6')
+        self.a.stats['cha']=8
+        self.assertEqual(formula(self.a,ability),'1к6-2')

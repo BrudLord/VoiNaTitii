@@ -366,7 +366,7 @@ def execute(user, p):
             if not isinstance(data, dict):
                 raise ValueError('Параметры должны быть объектом')
             validate_entry(data)
-            entry.data = data
+            entry.data = {**data,'reviewed':True}
         entry.save()
         return {'id': entry.id}
     elif op == 'alchemy.oil':
@@ -468,6 +468,8 @@ def execute(user, p):
                         continue
                 effects.append(e)
             c.runtime['effects'] = effects
+            for participant in chars.values():
+                participant.runtime['effects']=[e for e in participant.runtime.get('effects',[]) if e.get('duration')!='current_turn']
             scene.state['turn'] = (scene.state['turn'] + 1) % len(order)
             if scene.state['turn'] == 0:
                 scene.state['round'] += 1
@@ -649,7 +651,7 @@ def validate_entry(d):
         if type(e.get('value', 0)) is not int or type(e.get('turns', 3)) is not int:
             raise ValueError('Величина и длительность эффекта должны быть целыми числами')
         bounded(e.get('value', 0), -10000, 10000)
-        if e.get('duration', 'turns') not in ['turns', 'battle', 'aura']:
+        if e.get('duration', 'turns') not in ['turns', 'battle', 'aura', 'current_turn', 'actions']:
             raise ValueError('Неизвестная длительность')
         bounded(e.get('turns', 3), 1, 100)
 

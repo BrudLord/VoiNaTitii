@@ -27,7 +27,9 @@ class Command(BaseCommand):
             if not entry: entry=Entry(kind='ability',name=display,source=source)
             if not entry.data.get('reviewed'):
                 # Preserve deliberate additions while repairing fields owned by the original importer.
-                entry.data={**entry.data,**data,'book_compiled':1}
+                for key in ['effects','target','automation_notes']:
+                    entry.data.pop(key,None)
+                entry.data={**entry.data,**data,'book_compiled':2}
                 entry.description=desc
                 entry.name=display
             else:

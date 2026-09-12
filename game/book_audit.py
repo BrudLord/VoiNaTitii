@@ -85,7 +85,12 @@ def abilities(text):
             data['keywords'].append(school)
         ranges=[k for k in keywords if re.search(r'Ближний|Дальнобойный|Вокруг|Линия|Сфера|Конус',k)]
         data['range']=' · '.join(ranges)
-        expressions=re.findall(r'(?:\d+\s*(?:к\d+|Ор)(?:\s*[+−-]\s*(?:\d+\s*\*?\s*)?Мод)?|(?:\d+\s*\*\s*)?Мод)\s*(?=(?:[А-Яа-яЁё]+\s+){0,3}урона)',description)
+        formula_text=description.replace('\\*','*')
+        expressions=re.findall(r'(?:\d+\s*(?:к\d+|Ор)(?:\s*[+−-]\s*(?:\d+\s*\*?\s*)?Мод)?|(?:\d+\s*\*\s*)?Мод)\s*(?=(?:[А-Яа-яЁё]+\s+){0,3}урона)',formula_text)
+        if not expressions:
+            expressions=re.findall(r'(?:получает|получают)\s+(\d+\s*(?:к\d+|Ор)(?:\s*[+−-]\s*(?:\d+\s*\*?\s*)?Мод)?|Мод)\s+(?:Физического|Физическим|Огнём|Огнем|Водой|Землёй|Землей|Воздухом|Тьмой|Светом|Молнией|Холодом|Природой|Изначального)\b',formula_text)
+        if not expressions:
+            expressions=re.findall(r'\b[Уу]рон\s+(\d+\s*(?:к\d+|Ор)(?:\s*[+−-]\s*(?:\d+\s*\*?\s*)?Мод)?)',description)
         if expressions:
             data.update(formula=expressions[0].replace(' ','').replace('−','-'),damage=True,
                         weapon='Ор' in expressions[0],formula_variants=list(dict.fromkeys(expressions)))
@@ -97,15 +102,9 @@ def abilities(text):
         if data.get('weapon') and school: data['requires']=[school]
         # Only literal, unconditional single-target clauses are compiled automatically.
         simple=not re.search(r'если|когда|вместо|случайн|кажд|выбер|выбор|можете|следующ|при |попадани|промах| или |аура|стойка',description+' '+keys,re.I)
-        effects=[]
-        if simple and category=='active':
-            for pattern,stat in [(r'Цель (?:получает|восстанавливает) (\d+) (?:Временных (?:хитов|ХП)|временных ХП)', 'temp'),
-                                 (r'Цель восстанавливает (\d+) ХП','hp')]:
-                for match in re.finditer(pattern,description): effects.append({'stat':stat,'value':int(match[1])})
-            for status,stat,sign in [('Благословение','hit',1),('Проклятье','hit',-1),('Кислота','ac',-1),('Мороз','speed',-1),('Ослабление','damage',-1),('Поджог','status',1),('Влага','status',1),('Яд','status',1),('Шок','status',1),('Оглушение','status',1),('Замедление','speed',-1)]:
-                match=re.search(r'(?:эффект |получает |и )'+status+r' (\d+)',description)
-                if match: effects.append({'stat':stat,'value':sign*int(match[1]),'name':status,'key':'status:'+status,'turns':3})
-        if effects: data.update(effects=effects,target='single',automation_notes='Числовые эффекты применяются автоматически; остальное — по описанию.')
+        from .book_effects import literal_effects
+        effects,target=literal_effects(description) if simple and category=='active' else ([],None)
+        if effects: data.update(effects=effects,target=target,automation_notes='Числовые эффекты применяются автоматически; остальное — по описанию.')
         if any(k.startswith('Аура') for k in keywords):
             data.update(aura=True,category='passive',target='multiple',rolls=False)
             # Track the owner's chosen recipients even when the special trigger is manual.

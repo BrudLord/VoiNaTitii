@@ -1,0 +1,1383 @@
+[
+  {
+    "name": "Пустые ножны",
+    "source": "Книга, строка 1053",
+    "description": "Цель получает 1к6+Мод Изначального урона и эффект Ослепление на 1 ход.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Ослепление",
+          "key": "status:Ослепление",
+          "turns": 1
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Болотная тень",
+    "source": "Книга, строка 1247",
+    "description": "В выбранной клетке появляется Болотная тень. У нее 15 ХП, 10 КД, скорость 5 и максимальное агро в группе. Местность Вокруг 1 от неё считается труднопроходимой для противников. Любой противник попавший по Тени атакой получает Оглушение 1.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    },
+    "after": {
+      "effects": null,
+      "target": null
+    }
+  },
+  {
+    "name": "Атака тотема",
+    "source": "Книга, строка 1811",
+    "description": "Эффект зависит от стихии тотема.\n\nВода - наносит 1к8 урона Водой и накладывает эффект Влага 1\n\nХолод - наносит 1к6 урона Холодом и накладывает эффект Мороз 1\n\nЗемля - наносит 1к4 урона Землёй и накладывает эффект Кислота 1",
+    "before": {
+      "effects": [
+        {
+          "stat": "ac",
+          "value": -1,
+          "name": "Кислота",
+          "key": "status:Кислота",
+          "turns": 3
+        },
+        {
+          "stat": "speed",
+          "value": -1,
+          "name": "Мороз",
+          "key": "status:Мороз",
+          "turns": 3
+        },
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Влага",
+          "key": "status:Влага",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    },
+    "after": {
+      "effects": null,
+      "target": null
+    }
+  },
+  {
+    "name": "Вал",
+    "source": "Книга, строка 1825",
+    "description": "Противники вокруг получают 2к4 урона Водой и эффект Влага 3. Вы и союзники вокруг восстанавливают 1к6 ХП.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Отравленный дротик",
+    "source": "Книга, строка 2664",
+    "description": "Цель получает 1к8+Мод урона Природой и эффект Замедление 2 на 1 ход.",
+    "before": {
+      "effects": [
+        {
+          "stat": "speed",
+          "value": -2,
+          "name": "Замедление",
+          "key": "status:Замедление",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "speed",
+          "value": -2,
+          "name": "Замедление",
+          "key": "status:Замедление",
+          "turns": 1
+        }
+      ]
+    }
+  },
+  {
+    "name": "Лунный свет",
+    "source": "Книга, строка 2785",
+    "description": "Цели в сфере получают 1к6 урона Светом и Ослабление 2.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Кровопускание",
+    "source": "Книга, строка 2902",
+    "description": "Цель получает 1Ор Физического урона и эффект Кровотечение 1.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Кровотечение",
+          "key": "status:Кровотечение",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Ритуал",
+    "source": "Книга, строка 2924",
+    "description": "Цели в сфере получают 2к6 Физического урона и эффект Кровотечение 3.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Кровотечение",
+          "key": "status:Кровотечение",
+          "turns": 3
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Ударная волна",
+    "source": "Книга, строка 3484",
+    "description": "Цели получают 1Ор Физического урона и Оглушение 1.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Психический разрыв",
+    "source": "Книга, строка 5672",
+    "description": "Цель получает 1к8 Изначального урона и эффект Оглушение 2. Урон увеличивается на количество Знаков Интерференции на цели.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Ускорение",
+    "source": "Книга, строка 5960",
+    "description": "Цель получает +3 инициативы и +2 скорости на 1 ход.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "speed",
+          "value": 2,
+          "name": "Бонус к скорости",
+          "turns": 1
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Паралич",
+    "source": "Книга, строка 6460",
+    "description": "Цель получает 2к10 урона Землей, Оглушение 5 и -2 КД на 1 ход.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "ac",
+          "value": -2,
+          "name": "Бонус к КД",
+          "turns": 1
+        },
+        {
+          "stat": "status",
+          "value": 5,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Гнилая ловушка",
+    "source": "Книга, строка 6470",
+    "description": "Цель получает 1к12+Мод урона Тьмой, Проклятье 3 и Замедление 3.",
+    "before": {
+      "effects": [
+        {
+          "stat": "speed",
+          "value": -3,
+          "name": "Замедление",
+          "key": "status:Замедление",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "hit",
+          "value": -3,
+          "name": "Проклятье",
+          "key": "status:Проклятье",
+          "turns": 3
+        },
+        {
+          "stat": "speed",
+          "value": -3,
+          "name": "Замедление",
+          "key": "status:Замедление",
+          "turns": 3
+        }
+      ]
+    }
+  },
+  {
+    "name": "Проклятье ворона",
+    "source": "Книга, строка 6681",
+    "description": "Цели в сфере получают 1к6+Мод урона Тьмой и эффект Проклятье 2.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Изначальный",
+    "source": "Книга, строка 6968",
+    "description": "Союзник получает 4 Временных ХП.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "temp",
+          "value": 4
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Земля",
+    "source": "Книга, строка 6996",
+    "description": "Цель получает Оглушение 1.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Тьма",
+    "source": "Книга, строка 7012",
+    "description": "Цель получает Продолжительный урон 2 Тьмой.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Продолжительный урон",
+          "key": "status:Продолжительный урон",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Свет",
+    "source": "Книга, строка 7020",
+    "description": "Союзник получает +2 к урону до конца хода.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "damage",
+          "value": 2,
+          "name": "Бонус к урону",
+          "duration": "current_turn"
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Струя пламени",
+    "source": "Книга, строка 7296",
+    "description": "Цель получает 1к6+2\\*Мод урона Огнём.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "1к6+2*Мод"
+    }
+  },
+  {
+    "name": "Жидкое пламя",
+    "source": "Книга, строка 7336",
+    "description": "Цели в сфере получают урон 1к8 Огнём и эффект Поджог 2.",
+    "before": {
+      "target": "single",
+      "formula": null,
+      "damage": null
+    },
+    "after": {
+      "target": "multiple",
+      "formula": "1к8",
+      "damage": true
+    }
+  },
+  {
+    "name": "Пекло",
+    "source": "Книга, строка 7345",
+    "description": "Цель получает урон 3к6+Мод Огнём и эффект Поджог 1.",
+    "before": {
+      "formula": null,
+      "damage": null
+    },
+    "after": {
+      "formula": "3к6+Мод",
+      "damage": true
+    }
+  },
+  {
+    "name": "Огненная стена",
+    "source": "Книга, строка 7365",
+    "description": "Урон 2к6+Мод Огнём и эффект Поджог 1.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Поджог",
+          "key": "status:Поджог",
+          "turns": 3
+        }
+      ],
+      "target": "single",
+      "formula": null,
+      "damage": null
+    },
+    "after": {
+      "effects": null,
+      "target": null,
+      "formula": "2к6+Мод",
+      "damage": true
+    }
+  },
+  {
+    "name": "Гейзер",
+    "source": "Книга, строка 7451",
+    "description": "Цель получает 1к8+Мод урона Водой и эффекты Влага 2, Сбит с ног.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Влага",
+          "key": "status:Влага",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Водяные путы",
+    "source": "Книга, строка 7471",
+    "description": "Цели в сфере получают 1к4 урона Водой и эффекты Замедление 2 и Влага 1.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Влага",
+          "key": "status:Влага",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Влага",
+          "key": "status:Влага",
+          "turns": 3
+        },
+        {
+          "stat": "speed",
+          "value": -2,
+          "name": "Замедление",
+          "key": "status:Замедление",
+          "turns": 3
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Водяная пушка",
+    "source": "Книга, строка 7502",
+    "description": "Цель получает урон 3к6 Водой и эффект Влага 4.",
+    "before": {
+      "formula": null,
+      "damage": null
+    },
+    "after": {
+      "formula": "3к6",
+      "damage": true
+    }
+  },
+  {
+    "name": "Тяжелый дождь",
+    "source": "Книга, строка 7553",
+    "description": "Цели в сфере автоматически получают 1к8 урона Водой и Влага 3.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Бушующее море",
+    "source": "Книга, строка 7573",
+    "description": "Цели в сфере получают 2к6 урона Водой, Влага 5 и Сбит с ног.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 5,
+          "name": "Влага",
+          "key": "status:Влага",
+          "turns": 3
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Булыжник",
+    "source": "Книга, строка 7608",
+    "description": "Цель получает 1к6 урона Землей и Оглушение 2.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Лавина",
+    "source": "Книга, строка 7657",
+    "description": "Цели в сфере получают 1к4 урона Землей и Оглушение 3.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Каменные шипы",
+    "source": "Книга, строка 7677",
+    "description": "Цели в сфере получают 2к6+Мод Землей и Кровотечение 2.",
+    "before": {
+      "effects": null,
+      "target": null,
+      "formula": null,
+      "damage": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Кровотечение",
+          "key": "status:Кровотечение",
+          "turns": 3
+        }
+      ],
+      "target": "multiple",
+      "formula": "2к6+Мод",
+      "damage": true
+    }
+  },
+  {
+    "name": "Разрыв друзы",
+    "source": "Книга, строка 7695",
+    "description": "Противники в сфере получают 1к6+Мод урона Землей и Оглушение 3.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Песчаная буря",
+    "source": "Книга, строка 7707",
+    "description": "Цели в сфере получают 1к10 урона Землей и Ослепление на 1 ход.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Ослепление",
+          "key": "status:Ослепление",
+          "turns": 1
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Кислотный выброс",
+    "source": "Книга, строка 7720",
+    "description": "Цель получает 1к6 урона Землей и Оглушение 3. Вокруг 2 от цели накладывается эффект Кислота 3.",
+    "before": {
+      "effects": [
+        {
+          "stat": "ac",
+          "value": -3,
+          "name": "Кислота",
+          "key": "status:Кислота",
+          "turns": 3
+        },
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Воздушный кулак",
+    "source": "Книга, строка 7756",
+    "description": "Цель получает 1к10+2\\*Мод урона Воздухом, и Толчок 1.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "1к10+2*Мод"
+    }
+  },
+  {
+    "name": "Ослабление",
+    "source": "Книга, строка 7914",
+    "description": "Цель получает 1к10+Мод урона Тьмой, и Ослабление 3 на 1 ход.",
+    "before": {
+      "effects": [
+        {
+          "stat": "damage",
+          "value": -3,
+          "name": "Ослабление",
+          "key": "status:Ослабление",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "damage",
+          "value": -3,
+          "name": "Ослабление",
+          "key": "status:Ослабление",
+          "turns": 1
+        }
+      ]
+    }
+  },
+  {
+    "name": "Хватка тьмы",
+    "source": "Книга, строка 7963",
+    "description": "Цели в сфере получают 1к4 урона Тьмой и Проклятье 1.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Слепота",
+    "source": "Книга, строка 7995",
+    "description": "Цели в сфере получают 1к8 урона Тьмой, эффект Проклятье 2 и Ослепление на один ход.",
+    "before": {
+      "effects": [
+        {
+          "stat": "hit",
+          "value": -2,
+          "name": "Проклятье",
+          "key": "status:Проклятье",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "hit",
+          "value": -2,
+          "name": "Проклятье",
+          "key": "status:Проклятье",
+          "turns": 3
+        },
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Ослепление",
+          "key": "status:Ослепление",
+          "turns": 1
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Чёрное проклятье",
+    "source": "Книга, строка 8046",
+    "description": "Цель получает 3к12 урона Тьмой, Проклятье 3 и Ослабление 3.",
+    "before": {
+      "effects": [
+        {
+          "stat": "damage",
+          "value": -3,
+          "name": "Ослабление",
+          "key": "status:Ослабление",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "hit",
+          "value": -3,
+          "name": "Проклятье",
+          "key": "status:Проклятье",
+          "turns": 3
+        },
+        {
+          "stat": "damage",
+          "value": -3,
+          "name": "Ослабление",
+          "key": "status:Ослабление",
+          "turns": 3
+        }
+      ]
+    }
+  },
+  {
+    "name": "Благословение",
+    "source": "Книга, строка 8132",
+    "description": "Цель получает Благословение 2, 5 Временных ХП и +1 к урону до конца боя.",
+    "before": {
+      "effects": [
+        {
+          "stat": "hit",
+          "value": 2,
+          "name": "Благословение",
+          "key": "status:Благословение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "temp",
+          "value": 5
+        },
+        {
+          "stat": "damage",
+          "value": 1,
+          "name": "Бонус к урону",
+          "duration": "battle"
+        },
+        {
+          "stat": "hit",
+          "value": 2,
+          "name": "Благословение",
+          "key": "status:Благословение",
+          "turns": 3
+        }
+      ]
+    }
+  },
+  {
+    "name": "Ослепляющее излучение",
+    "source": "Книга, строка 8142",
+    "description": "Цели в сфере получают 2к6 урона Светом и Ослепление до конца хода.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Ослепление",
+          "key": "status:Ослепление",
+          "duration": "current_turn"
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Электрошок",
+    "source": "Книга, строка 8239",
+    "description": "Цель получает 1к10+2\\*Мод урона Молнией.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "1к10+2*Мод"
+    }
+  },
+  {
+    "name": "Удар молнии",
+    "source": "Книга, строка 8298",
+    "description": "Цель получает 3к6 урона Молнией и Оглушение 2.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Поступь грома",
+    "source": "Книга, строка 8337",
+    "description": "Действием движения Вы телепортируетесь в целевую клетку. Цели Вокруг 1 получают 1к4 урона Молнией и Шок 1.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Морозное касание",
+    "source": "Книга, строка 8395",
+    "description": "Цель получает 1к6+2\\*Мод урона Холодом и Мороз 2.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "1к6+2*Мод"
+    }
+  },
+  {
+    "name": "Холодный воздух",
+    "source": "Книга, строка 8424",
+    "description": "Цели в зоне автоматически получают эффект Мороз 2.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Стазис",
+    "source": "Книга, строка 8477",
+    "description": "Цель автоматически получает эффекты Мороз 5, Оглушение 2 и Сопротивление 10 всему урону. По окончанию оглушения цель восстанавливает 2к8 ХП и получает эффект Очищение 6",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "speed",
+          "value": -5,
+          "name": "Мороз",
+          "key": "status:Мороз",
+          "turns": 3
+        },
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Переохлаждение",
+    "source": "Книга, строка 8487",
+    "description": "Цель получает 2к6+Мод урона Холодом, Мороз 3 и Продолжительный урон 2 на время действия Мороза.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "speed",
+          "value": -3,
+          "name": "Мороз",
+          "key": "status:Мороз",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Морозный кристалл",
+    "source": "Книга, строка 8530",
+    "description": "Цель автоматически получает 2к12 урона Холодом и Обездвижен на 1 ход. Цели Вокруг 1 получают Мороз 3.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Обездвижен",
+          "key": "status:Обездвижен",
+          "turns": 1
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Подземные лианы",
+    "source": "Книга, строка 8640",
+    "description": "Цели в сфере получают Мод урона Природой и эффект Обездвижен на один ход.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 1,
+          "name": "Обездвижен",
+          "key": "status:Обездвижен",
+          "turns": 1
+        }
+      ],
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Хищный цветок",
+    "source": "Книга, строка 8671",
+    "description": "Цель получает 1к8+Мод урона Природой и Оглушение 3. Цель также получает 1к8+Мод урона Природой в конце своего хода.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Мощный выстрел",
+    "source": "Книга, строка 8721",
+    "description": "Цель получает 1Ор+2\\*Мод Физического урона. Это умение нельзя использовать на том же ходу, что и стандартное действие движения.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "1Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Ветряной залп",
+    "source": "Книга, строка 8813",
+    "description": "Цель получает 2Ор+2\\*Мод Физического урона и Толчок 10.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "2Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Дальний выстрел",
+    "source": "Книга, строка 8899",
+    "description": "Цель получает 2Ор+2\\*Мод Физического урона.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "2Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Удушающий шрам",
+    "source": "Книга, строка 9154",
+    "description": "Цель получает 1Ор+Мод Физического урона, Кровотечение 3 и 1 ход не может применять умения магических школ.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Кровотечение",
+          "key": "status:Кровотечение",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Бросок копья",
+    "source": "Книга, строка 9212",
+    "description": "Цель получает 1Ор+2\\*Мод Физического урона.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "1Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Точный бросок",
+    "source": "Книга, строка 9265",
+    "description": "Цель получает 3Ор+2\\*Мод Физического урона. Вы получаете +3 к попаданию для этой атаки.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "3Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Град из ударов",
+    "source": "Книга, строка 9340",
+    "description": "Противники вокруг получают 1Ор+Мод Физического урона, Толчок 2 и Шок 1.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Грубый удар",
+    "source": "Книга, строка 9371",
+    "description": "Цель получает 1Ор+2\\*Мод Физического урона.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "1Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Удар по голове",
+    "source": "Книга, строка 9403",
+    "description": "Цель получает 2Ор Физического урона и Оглушение 3.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 3,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Месиво",
+    "source": "Книга, строка 9445",
+    "description": "Цель получает 4Ор+2\\*Мод Физического урона. При промахе цель получает половину урона.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "4Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Взрывной удар",
+    "source": "Книга, строка 9466",
+    "description": "Цель получает 1Ор + Мод Физического урона и эффект Оглушение 5.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 5,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 5,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Тяжёлый удар",
+    "source": "Книга, строка 9553",
+    "description": "Цель получает 2Ор+Мод Физического урона и Оглушение 2.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Удар через щит",
+    "source": "Книга, строка 9587",
+    "description": "Цель получает 2Ор+2\\*Мод Физического урона. Это умение игнорирует бонус щита.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "2Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Удар порчи",
+    "source": "Книга, строка 9724",
+    "description": "Цель получает 1Ор+Мод Физического урона, Проклятье 2 и Кровотечение 2к4.",
+    "before": {
+      "effects": null,
+      "target": null
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "hit",
+          "value": -2,
+          "name": "Проклятье",
+          "key": "status:Проклятье",
+          "turns": 3
+        }
+      ],
+      "target": "single"
+    }
+  },
+  {
+    "name": "Удар обухом",
+    "source": "Книга, строка 9885",
+    "description": "Цель получает 2Ор Физического урона и Оглушение 2.",
+    "before": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "turns": 3
+        }
+      ]
+    },
+    "after": {
+      "effects": [
+        {
+          "stat": "status",
+          "value": 2,
+          "name": "Оглушение",
+          "key": "status:Оглушение",
+          "duration": "actions"
+        }
+      ]
+    }
+  },
+  {
+    "name": "Подтягивание",
+    "source": "Книга, строка 10071",
+    "description": "Цель получает 2Ор+2\\*Мод Физического урона и Подтягивание 1, Досягаемость 1.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "2Ор+2*Мод"
+    }
+  },
+  {
+    "name": "Плывущий удар",
+    "source": "Книга, строка 10146",
+    "description": "Цели в конусе получают 3Ор Физического урона, Сдвиг 2 и Влага 3. Размер конуса увеличивается Досягаемостью.",
+    "before": {
+      "target": "single"
+    },
+    "after": {
+      "target": "multiple"
+    }
+  },
+  {
+    "name": "Расчленение",
+    "source": "Книга, строка 10292",
+    "description": "Цель получает 6Ор+3\\*Мод Физического урона.",
+    "before": {
+      "formula": "Мод"
+    },
+    "after": {
+      "formula": "6Ор+3*Мод"
+    }
+  }
+]

@@ -152,7 +152,10 @@ def formula(c, ability, critical=False, calc=None, scene=None):
         result = re.sub(r'(\d+)[кd](\d+)', lambda m: f'{int(m[1]) * factor}к{m[2]}', result)
         if calc['orc'] and d.get('weapon') and calc['weapon']:
             result += ' + ' + calc['weapon']
+    result = re.sub(r'(\d+)\s*\*?\s*Мод',lambda m:str(int(m[1])*weapon_mod),result)
     result = result.replace('Мод', str(weapon_mod))
+    result = re.sub(r'\+\s*-','-',result)
+    result = re.sub(r'-\s*-','+',result)
     from .enchantments import for_ability, ability_bonus
     damage = ability_bonus(calc,ability,'damage') + sum(p.get('damage',0) for p in for_ability(calc,ability))
     if result and d.get('damage', False) and damage:
