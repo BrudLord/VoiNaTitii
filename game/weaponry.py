@@ -158,3 +158,14 @@ def validate_wide_swing(data):
 
 def offhand_penalty(data):
     return -4 if data.get('hand')=='off' and not set(data.get('keywords',[])).intersection({'Лёгкое','Легкое'}) else 0
+
+
+def unarmed_profile(ability):
+    return ability.data.get('unarmed_combat',{'dice':'1к8','ignore_requirements':True} if ability.name=='Бой без оружия' else None)
+
+
+def validate_unarmed(data):
+    p=data.get('unarmed_combat')
+    if p is None:return
+    if not isinstance(p,dict) or set(p)!={'dice','ignore_requirements'} or not isinstance(p['dice'],str) or not re.fullmatch(r'[1-9]\d{0,2}[кd][1-9]\d{0,2}',p['dice']) or type(p['ignore_requirements']) is not bool:
+        raise ValueError('Укажите кубики безоружного урона (например 1к8) и отмену требований оружия')

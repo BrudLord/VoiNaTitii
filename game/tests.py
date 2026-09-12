@@ -3217,3 +3217,57 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'undo'})
         self.post(self.alice,{**p,'cells':1,'cell_cost':4})
         self.assertEqual(Event.objects.latest('id').inputs['movement']['total_cost'],4)
+
+    def test_unarmed_combat_replaces_weapon_dice_and_preserves_strength_modifier(self):
+        from .rules import availability
+        from .targeting import physical_weapon_units
+        passive=Entry.objects.create(kind='ability',name='Бой без оружия',data={'category':'passive'})
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор + Мод','circle':0})
+        skill=Entry.objects.create(kind='ability',name='Удар молотом',data={'weapon':True,'damage':True,'formula':'2Ор + Мод','damage_type':'Физический','requires':['Молоты'],'circle':0})
+        self.a.stats['str']=18;self.a.save();self.a.abilities.add(skill);scene=self.start()
+        self.a.refresh_from_db();self.assertEqual(formula(self.a,attack),'4')
+        self.assertEqual(availability(self.a,skill,scene),'Нужно оружие в руках')
+        self.a.abilities.add(passive);calc=computed(self.a)
+        self.assertTrue(calc['unarmed']);self.assertEqual(calc['weapon_id'],None)
+        self.assertEqual(formula(self.a,attack),'1к8 + 4')
+        self.assertEqual(formula(self.a,attack,True),'2к8 + 4')
+        self.assertEqual(formula(self.a,skill),'2к8 + 4')
+        self.assertEqual(availability(self.a,skill,scene),'')
+        self.assertEqual(physical_weapon_units(skill,calc),2)
+        passive.archived=True;passive.save()
+        self.assertEqual(formula(self.a,attack),'4')
+        self.assertEqual(availability(self.a,skill,scene),'Нужно оружие в руках')
+
+    def test_unarmed_combat_does_not_replace_held_weapon_or_magic_requirements(self):
+        from .rules import availability
+        passive=Entry.objects.create(kind='ability',name='Бой без оружия',data={'category':'passive'})
+        item=Item.objects.create(character=self.a,name='Меч',equipped=True,data={'item_type':'weapon','dice':'1к6','stat':'dex','no_proficiency':True})
+        self.a.abilities.add(passive);scene=self.start()
+        calc=computed(self.a);self.assertEqual(calc['weapon'],'1к6');self.assertEqual(calc['unarmed_dice'],'')
+        self.assertEqual(availability(self.a,Entry(data={'weapon':True,'requires':['Молоты']}),scene),'')
+        self.assertEqual(availability(self.a,Entry(data={'requires':['Магия']}),scene),'Нужно подходящее оружие')
+        self.post(self.alice,{'op':'weapon.select','character':self.a.pk,'item':0})
+        self.a.refresh_from_db();self.assertEqual(computed(self.a)['unarmed_dice'],'1к8')
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(computed(self.a)['weapon_id'],item.pk)
+
+    def test_unarmed_weapon_skill_application_and_undo(self):
+        passive=Entry.objects.create(kind='ability',name='Бой без оружия',data={'category':'passive'})
+        skill=Entry.objects.create(kind='ability',name='Удар без оружия',data={'weapon':True,'damage':True,'damage_type':'Физический','formula':'2Ор','requires':['Топоры'],'circle':0,'effects':[{'stat':'hit','name':'Благословение','value':1}]})
+        self.a.abilities.add(passive,skill);self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':skill.pk,'targets':[self.b.pk],'outcome':'critical','roll_result':'Попадание 20; урон 18'})
+        row=Event.objects.latest('id').inputs['attack_targets'][0]
+        self.assertEqual(row['damage'],'4к8')
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['value'],1)
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_unarmed_profile_is_editable_and_imported(self):
+        from .views import validate_entry
+        from .book_audit import abilities
+        from django.conf import settings
+        rows={name:data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text())}
+        self.assertEqual(rows['Бой без оружия']['unarmed_combat'],{'dice':'1к8','ignore_requirements':True})
+        passive=Entry.objects.create(kind='ability',name='Своя техника',data={'category':'passive','unarmed_combat':{'dice':'2к6','ignore_requirements':False}})
+        self.a.abilities.add(passive)
+        self.assertEqual(computed(self.a)['weapon'],'2к6');self.assertFalse(computed(self.a)['ignore_weapon_requirements'])
+        for p in [{'dice':'0к6','ignore_requirements':True},{'dice':'1к8','ignore_requirements':'yes'},{'dice':'1к8'}]:
+            with self.assertRaises(ValueError):validate_entry({'unarmed_combat':p})

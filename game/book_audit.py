@@ -123,6 +123,8 @@ def abilities(text):
             else:
                 data['automation_notes']='Выбранные получатели видят ауру в листе. Особые последствия и срабатывания — по описанию.'
 
+        if clean(m[1])=='Бой без оружия':
+            data.update(unarmed_combat={'dice':'1к8','ignore_requirements':True},manual=False)
         if clean(m[1])=='Элементальная сфера':
             data.update(elemental_sphere={'strength':1},manual=False,target='single')
         if clean(m[1])=='Широкий замах':

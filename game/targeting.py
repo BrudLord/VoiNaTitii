@@ -6,7 +6,7 @@ from . import enchantments
 def physical_weapon_units(ability,calc):
     """Only physical weapon terms; elemental riders never increase this coefficient."""
     d=ability.data
-    if not d.get('weapon') or calc.get('unarmed'):return 0
+    if not d.get('weapon') or calc.get('unarmed') and not calc.get('unarmed_dice'):return 0
     formula=d.get('formula','')
     if d.get('damage_type'):
         return sum(int(n) for n in re.findall(r'(\d+)\s*Ор',formula)) if d['damage_type']=='Физический' else 0

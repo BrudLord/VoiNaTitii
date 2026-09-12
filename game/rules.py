@@ -38,7 +38,7 @@ def computed(c):
     effects.extend({**e,**({'ability_scope':'weapon' if i.data.get('dice') else 'focus'} if (i.data.get('dice') or i.data.get('item_type')=='focus') and e.get('stat') in ['hit','damage'] else {})} for i in equipped for e in i.data.get('effects',[])
                    if not ((i.data.get('dice') and i!=selected or i.data.get('item_type')=='focus' and i.id!=focus_id) and e.get('stat') in ['hit','damage']))
     learned = [a for a in c.abilities.all() if not a.archived]
-    from .weaponry import wide_swing_profile
+    from .weaponry import wide_swing_profile, unarmed_profile
     swings=[(a,wide_swing_profile(a)) for a in learned if wide_swing_profile(a) is not None]
     weapon_words=held_keywords(selected.data) if selected else []
     for ability,profile in swings:
@@ -91,6 +91,9 @@ def computed(c):
             weapon_item = item.id
             weapon_proficient = bool(item.data.get('no_proficiency') or trained.intersection(item.data.get('families',item.data.get('keywords',[]))))
             weapon_hit = int(item.data.get('hit',0)) + offhand_penalty(item.data)
+    unarmed_profiles=[p for a in learned if a.data.get('category','passive')=='passive' and (p:=unarmed_profile(a)) is not None]
+    unarmed_dice=unarmed_profiles[0]['dice'] if selected is None and unarmed_profiles else ''
+    if unarmed_dice:weapon=unarmed_dice;weapon_school='str';weapon_proficient=True
     elf_element=definition(c.info.get('elf_element'))
     if rd.get('element_damage') and elf_element:
         effects.append({'stat':'damage','value':rd['element_damage'],'keyword':elf_element.name})
@@ -127,6 +130,7 @@ def computed(c):
             'weapon_hand':selected.data.get('hand','main') if selected else 'main',
             'offhand_penalty':offhand_penalty(selected.data) if selected else 0,
             'weapon_id':weapon_item,'weapon_proficient':weapon_proficient,'weapon_hit':weapon_hit,
+            'unarmed_dice':unarmed_dice,'ignore_weapon_requirements':any(p['ignore_requirements'] for p in unarmed_profiles),
             'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
             'support':support,'support_mastery':support_mastery,
             'step':3 if support=='Воздух' else int(rd.get('step',1)),'resistance':int(rd.get('resistance',0))+(3 if support=='Земля' and support_mastery else 0),
@@ -161,7 +165,7 @@ def formula(c, ability, critical=False, calc=None, scene=None):
         mod_key = calc['weapon_stat']
     result = d.get('formula', '')
     standard = bool(d.get('system')) or ability.name in ['Стандартная атака','Провоцированная атака']
-    if standard and calc['unarmed']:
+    if standard and calc['unarmed'] and not calc.get('unarmed_dice'):
         result=str(calc['mods']['str'])
     weapon_mod = calc['mods'].get(mod_key,0)
     if standard and not calc['weapon_proficient']:
@@ -249,7 +253,7 @@ def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=F
     if d.get('weapon') and calc.get('needs_reload'):
         return 'Перезарядите оружие'
     required = d.get('requires', [])
-    if required and not set(required).intersection(calc['keywords']):
+    if required and not set(required).intersection(calc['keywords']) and not (d.get('weapon') and calc.get('ignore_weapon_requirements')):
         return 'Нужно подходящее оружие'
     return ''
 

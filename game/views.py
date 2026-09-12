@@ -105,7 +105,7 @@ def serialize_char(c, user):
         d = copy.deepcopy(a.data)
         charged=charged_arrows.profile(c,a)
         if charged and charged['prepare']:d['manual']=False
-        if a.name==weaving.NAME:d['manual']=False
+        if a.name==weaving.NAME or weaponry.unarmed_profile(a) is not None:d['manual']=False
         setup=prepared_attacks.profile(c,a)
         if setup and setup['prepare']:d['manual']=False
         if roll_pools.profile(a) or crafting.profile(a) or a.name in ['Молниеносные рефлексы','Интуитивное владение','Мистическая точность','Мистические стрелы','Двойной заряд']:d['manual']=False
@@ -704,6 +704,7 @@ def validate_entry(d):
     enchantments.validate_profile(d)
     weaponry.validate_profile(d)
     weaponry.validate_wide_swing(d)
+    weaponry.validate_unarmed(d)
     stances.validate_sphere(d)
     if not isinstance(d,dict):
         raise ValueError('Параметры должны быть объектом')
