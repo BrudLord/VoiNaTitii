@@ -2339,3 +2339,78 @@ class GameTests(TestCase):
                                    {'key':'burn','name':'Поджог','stat':'status','value':0}]
         rows=serialize_char(self.a,self.alice)['periodic_damage']
         self.assertEqual([(r['phase'],r['damage'],r['damage_type']) for r in rows],[('end',3,'Физический'),('start',4,'')])
+
+    def hyperthermia_setup(self):
+        scene=self.start();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'heat','name':'Гипертермия','status':'Гипертермия','stat':'status','value':5,'duration':'turns','remaining':3}]
+        self.a.save()
+        return scene
+
+    def test_hyperthermia_actions_misses_free_reactions_and_undo(self):
+        scene=self.hyperthermia_setup()
+        for action in ['main','minor','move','reaction','free']:
+            with self.subTest(action=action):
+                scene.state['turn']=scene.state['order'].index(self.b.pk if action=='reaction' else self.a.pk);scene.save()
+                ability=Entry.objects.create(kind='ability',name='Проверка '+action,data={'category':'active','action':action,'circle':0,'damage':True,'formula':'1к4','rolls':True})
+                self.a.abilities.add(ability)
+                self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[],'outcome':'miss','roll_result':'2'})
+                event=Event.objects.latest('id');rows=event.inputs['periodic_damage']
+                self.assertEqual([(r['damage'],r['action']) for r in rows],[(5,action)])
+                self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],10)
+                self.post(self.alice,{'op':'undo'});event.refresh_from_db();self.assertTrue(event.undone)
+                self.post(self.alice,{'op':'redo'});event.refresh_from_db();self.assertFalse(event.undone)
+                self.assertEqual(event.inputs['periodic_damage'],rows)
+                self.post(self.alice,{'op':'undo'})
+
+    def test_hyperthermia_only_performed_actions_not_exchange_skip_or_turn(self):
+        scene=self.hyperthermia_setup()
+        self.post(self.alice,{'op':'action.spend','character':self.a.pk,'action':'move'})
+        self.assertEqual(Event.objects.latest('id').inputs['periodic_damage'][0]['damage'],5)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{'op':'action.spend','character':self.a.pk,'action':'main','exchange':'minor'})
+        self.assertNotIn('periodic_damage',Event.objects.latest('id').inputs)
+        self.post(self.alice,{'op':'undo'})
+        self.a.refresh_from_db();self.a.runtime['effects'].append({'key':'stun','status':'Оглушение','name':'Оглушение','value':1,'duration':'actions'})
+        self.a.runtime['stun_pending']=1;self.a.save()
+        self.post(self.alice,{'op':'action.spend','character':self.a.pk,'action':'main'})
+        self.assertNotIn('periodic_damage',Event.objects.latest('id').inputs)
+        self.turn(scene,self.alice)
+        self.assertFalse(any(r['effect']=='Гипертермия' for r in Event.objects.latest('id').inputs['periodic_damage']))
+
+    def test_hyperthermia_readied_action_counts_reserving_and_performing_separately(self):
+        self.hyperthermia_setup()
+        self.post(self.alice,{'op':'action.ready','character':self.a.pk,'action':'main','condition':'Враг подошёл'})
+        self.assertEqual([r['action'] for r in Event.objects.latest('id').inputs['periodic_damage']],['minor'])
+        self.a.refresh_from_db();key=self.a.runtime['readied']['key']
+        self.post(self.alice,{'op':'action.perform_ready','character':self.a.pk,'ready_id':key,'triggered':True,'dex_roll':15})
+        self.assertEqual([r['action'] for r in Event.objects.latest('id').inputs['periodic_damage']],['main'])
+
+    def test_hyperthermia_reaction_strength_preview_and_new_effect_does_not_tick_retroactively(self):
+        from .statuses import apply_status
+        from .views import serialize_char
+        scene=self.start();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'fire','name':'Поджог','stat':'status','value':2,'duration':'turns','remaining':3}];self.a.save()
+        ability=Entry.objects.create(kind='ability',name='Яд на себя',data={'category':'active','action':'minor','circle':0,'rolls':False,'effects':[{'name':'Яд','stat':'status','value':3,'duration':'turns','turns':3}]})
+        self.a.abilities.add(ability)
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.a.pk],'reactions':{f'{self.a.pk}:0':'fire'}})
+        self.assertNotIn('periodic_damage',Event.objects.latest('id').inputs)
+        self.a.refresh_from_db();rows=serialize_char(self.a,self.alice)['periodic_damage']
+        self.assertEqual([(r['effect'],r['phase'],r['damage']) for r in rows],[('Гипертермия','action',5)])
+        self.post(self.alice,{'op':'action.spend','character':self.a.pk,'action':'main'})
+        self.assertEqual(Event.objects.latest('id').inputs['periodic_damage'][0]['damage'],5)
+
+    def test_hyperthermia_reload_counts_an_action(self):
+        weapon,attack,scene,p,reload=self.reload_setup()
+        self.a.refresh_from_db();self.a.runtime['effects']=[{'key':'heat','status':'Гипертермия','value':4}];self.a.save()
+        self.post(self.alice,p)
+        self.assertEqual(len(Event.objects.latest('id').inputs['periodic_damage']),1)
+        self.post(self.alice,reload)
+        self.assertEqual([(r['damage'],r['action']) for r in Event.objects.latest('id').inputs['periodic_damage']],[(4,'minor')])
+        self.post(self.alice,{'op':'undo'});weapon.refresh_from_db();self.assertTrue(weapon.data['needs_reload'])
+
+    def test_hyperthermia_woven_attack_counts_one_action(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        self.a.refresh_from_db();self.a.runtime['effects']=[{'key':'heat','status':'Гипертермия','value':4}];self.a.save()
+        self.post(self.alice,p)
+        self.assertEqual([(r['damage'],r['action']) for r in Event.objects.latest('id').inputs['periodic_damage']],[(4,'main')])
+        self.assertNotIn('periodic_damage',Event.objects.latest('id').inputs['weaving'])

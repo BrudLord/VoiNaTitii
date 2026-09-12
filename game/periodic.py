@@ -2,6 +2,7 @@
 from .statuses import status_name
 
 PROFILES={
+    'Гипертермия':('action',1,'',0),
     'Поджог':('start',1,'Огонь',0),
     'Яд':('end',1,'Природа',0),
     'Кровотечение':('end',1,'Физический',0),
@@ -26,3 +27,11 @@ def damage_events(character,phase=None):
         result.append({'character':character.pk,'target':character.name,'effect':name,'phase':timing,
                        'damage':amount,'damage_type':kind,'area':area,'source':effect.get('source','')})
     return result
+
+
+def action_performed(change, character, action):
+    """Record an actual action, not reservation of its resource or a skipped action."""
+    if not change.scene:return
+    rows=damage_events(character,'action')
+    for row in rows:row['action']=action
+    if rows:change.inputs.setdefault('periodic_damage',[]).extend(rows)

@@ -32,6 +32,7 @@ def reserve(user,p):
     change=Change(user,'Отложенное действие · '+c.name,scene,inputs={'condition':condition,'action':key})
     change.watch(c)
     c.runtime['actions']['minor']-=1;c.runtime['actions'][key]-=1
+    change.action(c,'minor')
     held={'key':str(uuid.uuid4()),'action':key,'condition':condition,'round':scene.state['round']}
     if c.runtime.get('readied'):c.runtime.setdefault('readied_queue',[]).append(held)
     else:c.runtime['readied']=held
@@ -66,6 +67,7 @@ def perform(user,p):
     blocked=availability(c,SimpleNamespace(data={'action':held['action'] if held else None}),scene,readied=p.get('ready_id') or True)
     if blocked:raise ValueError(blocked)
     change=Change(user,'Выполнено отложенное действие · '+c.name,scene)
+    change.action(c,held['action'])
     resolve(change,c,scene,p)
     change.finish()
 

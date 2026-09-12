@@ -272,6 +272,10 @@ class Change:
             self.before[key] = copy.deepcopy(item_snapshot(obj) if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime)
         return obj
 
+    def action(self, character, action):
+        from .periodic import action_performed
+        action_performed(self, character, action)
+
     def depend(self, obj):
         key=('item:' if isinstance(obj,Item) else 'character:')+str(obj.pk)
         self.inputs.setdefault('dependencies',[])

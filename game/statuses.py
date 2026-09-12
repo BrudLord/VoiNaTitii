@@ -50,6 +50,7 @@ def apply_status(target, incoming, choice=None):
         # HP changes from reaction strength remain manual, as agreed with the user.
         incoming.update(name=result,status=result,key='status:'+result,stat='status',value=strength,
                         note='Последствия реакции по книге; изменение ХП вносит мастер.')
+        if result=='Гипертермия':incoming['note']=f'За каждое совершённое действие: {strength} урона. ХП вносит мастер.'
         if result=='Некропламя':incoming['note']=f'В начале хода: {strength*2} продолжительного урона. ХП вносит мастер.'
         if result in ['Священное пламя','Вирус']:incoming['note']=f'В начале хода цели: {strength} урона Вокруг 1. ХП вносит мастер.'
         if result=='Размякшая плоть': incoming.update(stat='damage',value=-strength)

@@ -56,6 +56,7 @@ def mutate(user,p):
             if scene.state['order'][scene.state['turn']]!=character.id or character.runtime['actions'].get('main',0)<1:
                 raise ValueError('Для смены оружия нужно основное действие в свой ход')
             character.runtime['actions']['main']-=1
+            change.action(character,'main')
         item.equipped=not item.equipped
         if item.equipped and item.data.get('dice'):character.runtime['weapon_id']=item.id
         if item.equipped and item.data.get('item_type')=='focus':character.runtime['focus_id']=item.id

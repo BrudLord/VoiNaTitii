@@ -26,7 +26,9 @@ def apply_oil(user,p):
     change=Change(user,'Масло точности · '+weapon.name,scene,inputs={'character':c.id,'oil':oil.id,'weapon':weapon.id})
     change.watch(oil).quantity-=1
     change.watch(weapon)
-    if scene:change.watch(c).runtime['actions']['main']-=1
+    if scene:
+        change.watch(c).runtime['actions']['main']-=1
+        change.action(c,'main')
     if weapon.quantity>1:
         weapon.quantity-=1
         result=new_item(change,c)

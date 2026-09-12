@@ -57,6 +57,7 @@ def mutate(user,p):
     if reason:raise ValueError(reason)
     change=Change(user,('Смена стихии' if switching else 'Стихийная поддержка · Вода')+' · '+c.name,scene)
     change.watch(c)
+    change.action(c,'minor' if switching else 'free')
     if switching:
         value=p.get('stance_mode')
         if value not in MODES or value==mode(c):raise ValueError('Выберите другой режим стойки')

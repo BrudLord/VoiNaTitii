@@ -102,6 +102,7 @@ def reload_weapon(user,p):
         action=calc['reload_action']
         if c.runtime.get('actions',{}).get(action,0)<1:raise ValueError('Нет действия для перезарядки')
         change.watch(c).runtime['actions'][action]-=1
+        change.action(c,action)
     change.watch(item).data['needs_reload']=False
     change.finish()
 

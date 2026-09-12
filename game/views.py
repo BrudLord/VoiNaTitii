@@ -620,6 +620,7 @@ def execute(user, p):
             if c.runtime.get('actions',{}).get('minor',0)<1:
                 raise ValueError('Нет малого действия для смены хвата')
             change.watch(c).runtime['actions']['minor']-=1
+            change.action(c,'minor')
         change.watch(item).data['grip']=p['grip']
         change.finish()
     elif op in ['weapon.select','focus.select']:
@@ -653,10 +654,12 @@ def execute(user, p):
             if c.runtime.get('stun_pending',0) or statuses.intersection({'Сон','Страх'}):
                 raise ValueError('Сейчас персонаж должен пропускать действия')
             c.runtime['actions'][key]-=1
+            change.action(c,'move')
             c.runtime['effects']=[e for e in c.runtime.get('effects',[]) if status_name(e)!='Сбит с ног']
             change.finish()
             return {}
         c.runtime['actions'][key] -= 1
+        if not c.runtime.get('stun_pending',0) and not p.get('exchange'):change.action(c,key)
         if c.runtime.get('stun_pending',0):
             if p.get('exchange'):
                 raise ValueError('Оглушение: сначала укажите пропущенное действие')
@@ -769,6 +772,7 @@ def use_ability(user, p, embedded=False):
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
+    if not aura and not embedded:change.action(c,'reaction' if p.get('as_reaction') else d.get('action','main'))
     if p.get('support_minor'):
         change.label+=' · Малым'
         change.inputs['support_minor']=True
