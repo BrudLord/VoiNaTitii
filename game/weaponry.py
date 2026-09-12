@@ -26,16 +26,35 @@ def compatible(item, spec):
 
 def keywords(ability,calc):
     words=list(ability.data.get('keywords',[]))
-    if not ability.data.get('weapon'):return words
+    if not ability.data.get('weapon'):return melee_range(words,calc)
     words+= [w for w in calc.get('weapon_keywords',[]) if w in ['Одноручное','Двуручное'] and w not in words]
     if ability.data.get('system'):
-        words=[w for w in words if not w.startswith(('Ближний','Дальнобойный','Метательное'))]
+        words=[w for w in words if not w.startswith(('Ближний','Дальнобойный','Метательное','Линия'))]
         ranged=next((w for w in calc.get('weapon_keywords',[]) if w.startswith('Дальнобойный')),None)
         thrown=next((w for w in calc.get('weapon_keywords',[]) if w.startswith('Метательное')),None)
         words.append(ranged or thrown.replace('Метательное','Дальнобойный') if calc.get('attack_mode')=='ranged' and thrown else ranged or 'Ближний')
+        if thrown and calc.get('attack_mode')=='ranged':words.append('Метательное')
     bonus=calc.get('weapon_range_bonus',0)
     if bonus and ability.data.get('system'):words=[re.sub(r'Дальнобойный (\d+)',lambda m:'Дальнобойный '+str(int(m[1])+bonus),w) for w in words]
-    return words
+    return melee_range(words,calc)
+
+
+def melee_range(words,calc):
+    distance=1+calc.get('weapon_reach',0)
+    return [('Линия '+str(distance) if calc.get('massive_strikes') else 'Ближний '+str(distance) if distance>1 else word) if re.fullmatch(r'Ближний(?: \d+)?',word) else word for word in words]
+
+
+def effective(character,ability,calc=None):
+    from .rules import computed
+    import copy
+    calc=calc or computed(character)
+    if not calc['massive_strikes']:return ability
+    words=keywords(ability,calc)
+    if not calc['massive_strikes'] or not any(w.startswith('Линия ') for w in words):return ability
+    if not any(re.fullmatch(r'Ближний(?: \d+)?',w) for w in ability.data.get('keywords',[])) and not ability.data.get('system'):return ability
+    result=copy.copy(ability);result.data=copy.deepcopy(ability.data)
+    result.data.update(keywords=words,target='multiple',range=next(w for w in words if w.startswith('Линия ')))
+    return result
 
 
 def validate(data):

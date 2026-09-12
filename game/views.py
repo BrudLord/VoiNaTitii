@@ -98,7 +98,7 @@ def serialize_char(c, user):
     learned = {a.id:a for a in c.abilities.all() if not a.archived}
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
-        a = stances.effective(c,seeking_arrows.effective(a))
+        a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)),calc)
         d = copy.deepcopy(a.data)
         charged=charged_arrows.profile(c,a)
         if charged and charged['prepare']:d['manual']=False
@@ -108,7 +108,7 @@ def serialize_char(c, user):
         if roll_pools.profile(a) or crafting.profile(a) or a.name in ['Молниеносные рефлексы','Интуитивное владение','Мистическая точность','Мистические стрелы','Двойной заряд']:d['manual']=False
         d['keywords']=weaponry.keywords(a,calc)
         if d.get('weapon'):
-            d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
+            d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера','Линия','Конус'))),d.get('range',''))
         minor_attack=stances.minor_attack(c,a)
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
@@ -730,7 +730,7 @@ def use_ability(user, p, embedded=False):
     a = get_object_or_404(Entry, pk=p['ability'],kind='ability',archived=False)
     if not a.data.get('system') and not c.abilities.filter(pk=a.pk).exists():
         raise PermissionDenied('Персонаж не владеет этим умением')
-    a = stances.effective(c,seeking_arrows.effective(a))
+    a = weaponry.effective(c,stances.effective(c,seeking_arrows.effective(a)))
     scene = current_scene(c)
     if not scene:
         raise ValueError('Умение можно применить в активном бою')

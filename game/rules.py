@@ -104,6 +104,8 @@ def computed(c):
             'enchantments':enchantments, 'focus_id':focus_id,
             'initiative':mods['dex'] + sum(p.get('initiative',0) for p in enchantments),
             'forced_movement_reduction':sum(p.get('forced_movement_reduction',0) for p in enchantments),
+            'massive_strikes':any(a.name=='Массивные удары' and not a.archived for a in c.abilities.all()),
+            'weapon_reach':sum(int(m[1]) for word in (held_keywords(selected.data) if selected else []) if (m:=re.fullmatch(r'Досягаемость (\d+)',word))),
             'weapon_keywords':held_keywords(selected.data) if selected else [],
             'versatile':versatile(selected.data) if selected else '',
             'reload_action':reload_action(selected.data) if selected else '',

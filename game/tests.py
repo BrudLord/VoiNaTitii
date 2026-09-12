@@ -2576,3 +2576,40 @@ class GameTests(TestCase):
         self.assertEqual(equip_action(item),'main')
         item.data={'item_type':'weapon','dice':'1к8','keywords':['Метательное 5']}
         self.assertEqual(equip_action(item),'main')
+
+    def test_massive_strikes_turns_melee_into_line_with_weapon_reach(self):
+        from .weaponry import effective,keywords
+        passive=Entry.objects.create(kind='ability',name='Массивные удары',data={'category':'passive'})
+        weapon=Item.objects.create(character=self.a,name='Пика',equipped=True,data={'item_type':'weapon','dice':'1к10','keywords':['Двуручное','Досягаемость 1']})
+        ability=Entry.objects.create(kind='ability',name='Удар',data={'weapon':True,'keywords':['Ближний'],'target':'single','formula':'1Ор','damage':True})
+        self.assertIn('Ближний 2',keywords(ability,computed(self.a)))
+        self.a.abilities.add(passive)
+        transformed=effective(self.a,ability)
+        self.assertEqual(transformed.data['range'],'Линия 2');self.assertEqual(transformed.data['target'],'multiple')
+        self.assertEqual(ability.data['target'],'single')
+        passive.archived=True;passive.save();self.assertEqual(effective(self.a,ability).data['target'],'single')
+
+    def test_massive_strikes_accepts_multiple_targets_and_keeps_ranged_spells_single(self):
+        from .views import serialize_char
+        passive=Entry.objects.create(kind='ability',name='Массивные удары',data={'category':'passive'})
+        ability=Entry.objects.create(kind='ability',name='Ближняя магия',data={'category':'active','action':'main','circle':0,'keywords':['Ближний'],'target':'single','effects':[{'name':'Влага','stat':'status','value':2}],'rolls':False})
+        self.a.abilities.add(passive,ability);self.start()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==ability.pk)
+        self.assertEqual((row['data']['range'],row['data']['target']),('Линия 1','multiple'))
+        self.post(self.alice,{'op':'ability.use','character':self.a.pk,'ability':ability.pk,'targets':[self.a.pk,self.b.pk]})
+        self.a.refresh_from_db();self.b.refresh_from_db();self.assertEqual(self.a.runtime['effects'][0]['value'],2);self.assertEqual(self.b.runtime['effects'][0]['value'],2)
+        self.post(self.alice,{'op':'undo'})
+        ability.data['keywords']=['Дальнобойный 5'];ability.save()
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==ability.pk)
+        self.assertEqual(row['data']['target'],'single')
+
+    def test_throwing_weapon_keeps_throwing_keyword_and_does_not_become_line(self):
+        from .weaponry import effective,keywords
+        passive=Entry.objects.create(kind='ability',name='Массивные удары',data={'category':'passive'})
+        self.a.abilities.add(passive)
+        Item.objects.create(character=self.a,name='Кинжал',equipped=True,data={'dice':'1к4','item_type':'weapon','keywords':['Метательное 5']})
+        self.a.runtime['attack_mode']='ranged'
+        a=Entry(name='Стандартная атака',data={'weapon':True,'system':True,'keywords':['Ближний'],'target':'single'})
+        result=effective(self.a,a)
+        self.assertEqual(result.data['target'],'single')
+        self.assertEqual(keywords(result,computed(self.a)),['Дальнобойный 5','Метательное'])
