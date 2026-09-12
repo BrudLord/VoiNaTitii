@@ -17,8 +17,8 @@ def profile(entry):
     if weaponry.profile(entry):return {'craft':'Оружейник','kind':'upgrade',**weaponry.profile(entry)}
 
 
-def catalogue():
-    return [{'id':e.id,'name':e.name,**profile(e)} for e in Entry.objects.filter(archived=False) if profile(e)]
+def catalogue(entries=None):
+    return [{'id':e.id,'name':e.name,**profile(e)} for e in (Entry.objects.filter(archived=False) if entries is None else entries) if profile(e)]
 
 
 def apply(user,p):

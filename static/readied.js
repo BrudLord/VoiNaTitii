@@ -21,6 +21,6 @@ document.addEventListener('click',e=>{
  }
 });
 
-function shiftNotice(c){const shift=c.runtime.initiative_shift;return shift?`<p class="notice">Со следующего раунда: инициатива ${shift.value}, ${shift.after===c.id?'': 'после '+esc(byId(S.characters,shift.after)?.name||'участника')}.</p>`:''}
+function shiftNotice(c){const shift=c.runtime.initiative_shift;return shift?`<p class="notice">Со следующего раунда: инициатива ${shift.value}${shift.after===c.id?'': ', после '+esc(byId(S.characters,shift.after)?.name||'участника')}.</p>`:''}
 
 document.addEventListener('change',e=>{if(e.target.name==='voluntary_fail'){const input=dialogBody.querySelector('[name=dex_roll]');if(input){input.required=!e.target.checked;input.disabled=e.target.checked}}});

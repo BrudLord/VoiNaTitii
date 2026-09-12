@@ -131,6 +131,10 @@ def state(request):
     clock, _ = Clock.objects.get_or_create(pk=1)
     if request.GET.get('revision') == str(clock.revision):
         return JsonResponse({'unchanged': True, 'revision': clock.revision})
+    from .catalogue import payload as catalogue_payload
+    reference=catalogue_payload()
+    if request.GET.get('catalog_revision')==reference['catalog_revision']:
+        reference={'catalog_revision':reference['catalog_revision']}
     campaigns = []
     accessible = set()
     for c in Campaign.objects.all():
@@ -158,9 +162,8 @@ def state(request):
                         'master': master(request.user)}, 'users': list(User.objects.values('id', 'username')) if master(request.user) else [],
                         'characters': [serialize_char(c, request.user)
                         for c in Character.objects.select_related('owner').prefetch_related('abilities', 'items', 'memberships')],
-                        'rules': {'crafting':crafting.catalogue(), 'enchantments':enchantments.catalogue(), 'alignment':alignment_schema(), 'statuses':list(STATUS), 'neutral':NEUTRAL, 'constructive':CONSTRUCTIVE},
                         'campaigns': campaigns, 'sessions': sessions, 'scenes': scenes, 'events': visible_events,
-                        'catalog': list(Entry.objects.filter(archived=False).values('id', 'kind', 'name', 'description', 'data', 'source'))})
+                        **reference},json_dumps_params={'ensure_ascii':False,'separators':(',',':')})
 
 
 def merge_notes(base, ours, theirs):

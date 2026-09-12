@@ -1014,3 +1014,48 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id],
                               'use_ready':True,'ready_id':first,'triggered':True,'dex_roll':10})
         self.a.refresh_from_db();self.assertNotIn('readied',self.a.runtime)
+
+    def test_state_reuses_catalogue_after_character_change(self):
+        Entry.objects.create(kind='item',name='Большая справочная запись',description='Описание ' * 10000)
+        self.client.force_login(self.alice)
+        first=self.client.get('/api/state/');original=first.json();token=original['catalog_revision']
+        self.post(self.gm,{'op':'hp','character':self.a.id,'mode':'damage','value':1})
+        self.client.force_login(self.alice)
+        response=self.client.get('/api/state/',{'catalog_revision':token,'revision':original['revision']})
+        data=response.json()
+        self.assertNotIn('catalog',data);self.assertNotIn('rules',data)
+        self.assertEqual(data['catalog_revision'],token)
+        self.assertEqual(next(c for c in data['characters'] if c['id']==self.a.id)['runtime']['hp'],9)
+        self.assertLess(len(response.content),len(first.content)//2)
+        unchanged=self.client.get('/api/state/',{'revision':data['revision'],'catalog_revision':token}).json()
+        self.assertTrue(unchanged['unchanged'])
+
+    def test_catalogue_updates_replace_cached_rules_and_archived_entries(self):
+        self.client.force_login(self.alice)
+        first=self.client.get('/api/state/').json();token=first['catalog_revision']
+        result=self.post(self.gm,{'op':'entry.save','kind':'ability','name':'Особые чары','description':'Первый вариант',
+                                 'data':{'enchantment':{'types':['weapon'],'hit':3}}})
+        self.client.force_login(self.alice)
+        updated=self.client.get('/api/state/',{'catalog_revision':token,'revision':first['revision']}).json()
+        self.assertNotEqual(updated['catalog_revision'],token)
+        self.assertEqual(next(e for e in updated['rules']['enchantments'] if e['id']==result['id'])['hit'],3)
+        token=updated['catalog_revision']
+        self.post(self.gm,{'op':'entry.save','id':result['id'],'archive':True})
+        self.client.force_login(self.alice)
+        archived=self.client.get('/api/state/',{'catalog_revision':token}).json()
+        self.assertNotEqual(archived['catalog_revision'],token)
+        self.assertNotIn(result['id'],[e['id'] for e in archived['catalog']])
+        self.assertNotIn(result['id'],[e['id'] for e in archived['rules']['enchantments']])
+
+    def test_catalogue_full_response_without_cache_and_content_based_revision(self):
+        self.client.force_login(self.alice)
+        first=self.client.get('/api/state/').json()
+        repeat=self.client.get('/api/state/',{'catalog_revision':'unknown'}).json()
+        self.assertEqual(first['catalog_revision'],repeat['catalog_revision']);self.assertIn('catalog',repeat)
+        self.assertIn('rules',repeat)
+        self.bless.data=dict(reversed(list(self.bless.data.items())));self.bless.save()
+        same=self.client.get('/api/state/').json()
+        self.assertEqual(first['catalog_revision'],same['catalog_revision'])
+        self.bless.description='Изменённое описание';self.bless.save()
+        updated=self.client.get('/api/state/',{'catalog_revision':first['catalog_revision']}).json()
+        self.assertIn('catalog',updated);self.assertNotEqual(first['catalog_revision'],updated['catalog_revision'])

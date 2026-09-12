@@ -19,9 +19,9 @@ def profile(entry):
     return entry.data.get('enchantment', BOOK.get(entry.name.strip()))
 
 
-def catalogue():
+def catalogue(entries=None):
     return [{'id':e.id, 'name':e.name, 'description':e.description, **profile(e)}
-            for e in Entry.objects.filter(archived=False) if profile(e)]
+            for e in (Entry.objects.filter(archived=False) if entries is None else entries) if profile(e)]
 
 
 def validate(data):
