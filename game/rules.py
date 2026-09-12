@@ -24,7 +24,7 @@ def computed(c):
     selected = None if weapon_id==0 else next((i for i in weapons if str(i.id)==str(weapon_id)),weapons[0] if weapons else None)
     from .enchantments import equipment
     enchantments, focus_id = equipment(c, equipped, selected)
-    from .weaponry import upgrades, versatile, held_keywords
+    from .weaponry import upgrades, versatile, held_keywords, reload_action
     from .passives import lightning_reflexes
     weapon_upgrades=upgrades(selected) if selected else []
     effects = list(c.runtime.get('effects', []))
@@ -103,6 +103,8 @@ def computed(c):
             'forced_movement_reduction':sum(p.get('forced_movement_reduction',0) for p in enchantments),
             'weapon_keywords':held_keywords(selected.data) if selected else [],
             'versatile':versatile(selected.data) if selected else '',
+            'reload_action':reload_action(selected.data) if selected else '',
+            'needs_reload':bool(selected and reload_action(selected.data) and selected.data.get('needs_reload')),
             'grip':selected.data.get('grip','one') if selected else 'one',
             'weapon_range_bonus':sum(p.get('range',0) for p in weapon_upgrades),
             'armored_hit':sum(p.get('armored_hit',0) for p in weapon_upgrades),
@@ -223,6 +225,8 @@ def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=F
         return 'Применения закончились'
     if d.get('weapon') and not calc['weapon'] and not d.get('system') and ability.name!='Стандартная атака':
         return 'Нужно оружие в руках'
+    if d.get('weapon') and calc.get('needs_reload'):
+        return 'Перезарядите оружие'
     required = d.get('requires', [])
     if required and not set(required).intersection(calc['keywords']):
         return 'Нужно подходящее оружие'

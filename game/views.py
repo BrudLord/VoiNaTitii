@@ -579,6 +579,8 @@ def execute(user, p):
         if p.get('mode') not in ['melee','ranged']:raise ValueError('Выберите способ атаки')
         change=Change(user,'Способ атаки · '+c.name,current_scene(c))
         change.watch(c).runtime['attack_mode']=p['mode'];change.finish()
+    elif op=='weapon.reload':
+        weaponry.reload_weapon(user,p)
     elif op=='weapon.grip':
         c=owned(user,p['character'])
         calc=computed(c)
@@ -814,6 +816,7 @@ def use_ability(user, p):
     prepared_attacks.apply(change,c,a,targets,setup)
     mystic_arrows.apply(change,c,[targets[pk] for pk in ids],arrows,p)
     targeting.finalize(change)
+    if not aura:weaponry.discharge(change,c,a)
     if p.get('use_ready') and not aura:
         from .readied import resolve
         resolve(change,c,scene,p,d.get('action','main'))

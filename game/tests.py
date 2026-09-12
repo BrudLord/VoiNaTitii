@@ -1911,3 +1911,63 @@ class GameTests(TestCase):
         self.assertEqual(ability_bonus(computed(self.a),attack,'damage'),2)
         spell=Entry(name='Заклинание',data={'keywords':['Ближний']})
         self.assertEqual(ability_bonus(computed(self.a),spell,'damage'),0)
+
+    def reload_setup(self,action='малым'):
+        weapon=Item.objects.create(character=self.a,name='Арбалет',equipped=True,data={'item_type':'weapon','dice':'1к10','keywords':['Дальнобойный 10','Перезарядка '+action],'families':['Арбалеты'],'no_proficiency':True})
+        self.a.runtime['weapon_id']=weapon.id;self.a.save()
+        attack=Entry.objects.create(kind='ability',name='Выстрел',data={'weapon':True,'damage':True,'formula':'1Ор + Мод','action':'main','circle':0,'keywords':['Дальнобойный 10']})
+        self.a.abilities.add(attack)
+        scene=self.start()
+        p={'op':'ability.use','character':self.a.id,'ability':attack.id,'targets':[],'outcome':'hit','roll_result':'8'}
+        reload={'op':'weapon.reload','character':self.a.id,'item':weapon.id}
+        return weapon,attack,scene,p,reload
+
+    def test_crossbow_miss_requires_reload_and_undo_restores_both_resources(self):
+        from .rules import availability
+        weapon,attack,scene,p,reload=self.reload_setup()
+        self.post(self.alice,{**p,'outcome':'miss'})
+        weapon.refresh_from_db();self.assertTrue(weapon.data['needs_reload'])
+        self.a.refresh_from_db();self.a.runtime['actions']['main']=1;self.a.save()
+        self.assertEqual(availability(self.a,attack,scene),'Перезарядите оружие')
+        self.post(self.alice,p,400)
+        self.post(self.alice,reload);weapon.refresh_from_db();self.a.refresh_from_db()
+        self.assertFalse(weapon.data['needs_reload']);self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.post(self.alice,{'op':'undo'});weapon.refresh_from_db();self.a.refresh_from_db()
+        self.assertTrue(weapon.data['needs_reload']);self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.post(self.alice,{'op':'redo'});weapon.refresh_from_db();self.assertFalse(weapon.data['needs_reload'])
+        self.post(self.alice,p);weapon.refresh_from_db();self.assertTrue(weapon.data['needs_reload'])
+        self.post(self.alice,{'op':'undo'});weapon.refresh_from_db();self.assertFalse(weapon.data['needs_reload'])
+
+    def test_winch_crossbow_reloads_with_main_action_and_keeps_charge_between_turns(self):
+        weapon,attack,scene,p,reload=self.reload_setup('действием')
+        self.post(self.alice,p);self.post(self.alice,reload,400)
+        self.turn(scene,self.alice);self.post(self.alice,reload,400)
+        self.turn(scene,self.bob);self.a.refresh_from_db()
+        self.assertTrue(computed(self.a)['needs_reload'])
+        self.post(self.alice,reload);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.assertFalse(computed(self.a)['needs_reload'])
+
+    def test_reloading_permissions_stun_and_selected_weapon_are_checked(self):
+        weapon,attack,scene,p,reload=self.reload_setup()
+        self.post(self.alice,reload,400)
+        self.post(self.alice,p)
+        self.post(self.bob,reload,403)
+        self.post(self.alice,{**reload,'item':0},400)
+        self.a.refresh_from_db();self.a.runtime['stun_pending']=1;self.a.save()
+        self.post(self.alice,reload,400);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['minor'],1)
+        weapon.refresh_from_db();self.assertTrue(weapon.data['needs_reload'])
+
+    def test_switching_weapon_preserves_reload_and_does_not_block_spells(self):
+        from .rules import availability
+        weapon,attack,scene,p,reload=self.reload_setup();self.post(self.alice,p)
+        other=Item.objects.create(character=self.a,name='Второй арбалет',equipped=True,data=weapon.data.copy())
+        self.post(self.alice,{'op':'weapon.select','character':self.a.id,'item':other.id})
+        self.a.refresh_from_db();self.assertFalse(computed(self.a)['needs_reload'])
+        self.post(self.alice,{'op':'weapon.select','character':self.a.id,'item':weapon.id})
+        self.a.refresh_from_db();self.assertTrue(computed(self.a)['needs_reload'])
+        self.a.runtime['actions']['main']=1;self.a.save()
+        spell=Entry(name='Заклинание',data={'formula':'1к6','damage':True})
+        self.assertEqual(availability(self.a,spell,scene),'')

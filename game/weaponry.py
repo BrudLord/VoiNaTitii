@@ -75,3 +75,41 @@ def held_keywords(data):
         words=[w for w in words if w not in ['Одноручное','Двуручное']]
         words.append('Двуручное' if data.get('grip')=='two' else 'Одноручное')
     return list(dict.fromkeys(words))
+
+
+def reload_action(data):
+    for word in data.get('keywords',[]):
+        if word=='Перезарядка малым':return 'minor'
+        if word=='Перезарядка действием':return 'main'
+    return ''
+
+
+def reload_weapon(user,p):
+    from .views import owned
+    from .rules import computed, current_scene, Change
+    from .statuses import status_name
+    from .models import Item
+    c=owned(user,p['character']);calc=computed(c)
+    if p.get('item')!=calc['weapon_id'] or not calc['reload_action']:
+        raise ValueError('Выберите оружие с перезарядкой')
+    item=Item.objects.get(pk=calc['weapon_id'],character=c,equipped=True,archived=False,quantity__gt=0)
+    if not item.data.get('needs_reload'):raise ValueError('Оружие уже заряжено')
+    scene=current_scene(c);change=Change(user,'Перезарядка · '+item.name,scene)
+    if scene:
+        if scene.state['order'][scene.state['turn']]!=c.id:raise ValueError('Перезарядка доступна в свой ход')
+        if c.runtime.get('stun_pending',0) or any(status_name(e) in ['Сон','Страх'] for e in c.runtime.get('effects',[])):
+            raise ValueError('Сейчас персонаж должен пропускать действия')
+        action=calc['reload_action']
+        if c.runtime.get('actions',{}).get(action,0)<1:raise ValueError('Нет действия для перезарядки')
+        change.watch(c).runtime['actions'][action]-=1
+    change.watch(item).data['needs_reload']=False
+    change.finish()
+
+
+def discharge(change,c,ability):
+    from .rules import computed
+    if not ability.data.get('weapon'):return
+    calc=computed(c)
+    if not calc['reload_action']:return
+    item=c.items.get(pk=calc['weapon_id'])
+    change.watch(item).data['needs_reload']=True
