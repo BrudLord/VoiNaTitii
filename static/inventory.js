@@ -64,3 +64,11 @@ function transferItemForm(item){
 }
 function consumeItemForm(item){modal('Списать · '+item.name,`${input('quantity','Количество',1,'number',`min="1" max="${item.quantity}" required`)}${input('reason','На что потрачено / причина','')}`,async()=>api({op:'item.consume',id:item.id,revision:item.revision,quantity:Number(formObject().quantity),reason:formObject().reason}),'Списать')}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-do="item.consume"]');if(b)consumeItemForm(stockItem(b.dataset.id))});
+
+function equipButton(item,owner){
+ const battle=!!owner?.scene_id,weapon=item.data.item_type==='weapon';
+ const quick=!item.equipped&&weapon&&(item.data.keywords||[]).some(k=>['Лёгкое','Легкое','Резервное'].includes(k));
+ const reason=!item.quantity?'Нет предмета':battle&&item.data.item_type==='armor'?'Доспех меняется вне боя':battle?(quick?owner.minor_action_reason:owner.main_action_reason):'';
+ const title=item.equipped?'Снять':weapon?'Достать':'Надеть';
+ return btn(title+(battle?' · '+(quick?'малое':'основное'):''),'item.equip',`data-id="${item.id}" ${reason?'disabled title="'+esc(reason)+'"':''}`);
+}

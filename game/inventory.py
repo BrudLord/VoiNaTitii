@@ -53,10 +53,14 @@ def mutate(user,p):
         change.watch(character)
         if scene:
             if item.data.get('item_type')=='armor':raise ValueError('Доспех меняется вне боя')
-            if scene.state['order'][scene.state['turn']]!=character.id or character.runtime['actions'].get('main',0)<1:
-                raise ValueError('Для смены оружия нужно основное действие в свой ход')
-            character.runtime['actions']['main']-=1
-            change.action(character,'main')
+            from .rules import availability
+            from types import SimpleNamespace
+            action=weaponry.equip_action(item)
+            reason=availability(character,SimpleNamespace(data={'action':action}),scene)
+            if reason:raise ValueError(reason)
+            character.runtime['actions'][action]-=1
+            change.action(character,action)
+            change.inputs['equipment_action']=action
         item.equipped=not item.equipped
         if item.equipped and item.data.get('dice'):character.runtime['weapon_id']=item.id
         if item.equipped and item.data.get('item_type')=='focus':character.runtime['focus_id']=item.id

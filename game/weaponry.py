@@ -114,3 +114,9 @@ def discharge(change,c,ability):
     if not calc['reload_action']:return
     item=c.items.get(pk=calc['weapon_id'])
     change.watch(item).data['needs_reload']=True
+
+
+def equip_action(item):
+    if not item.equipped and item.data.get('item_type')=='weapon' and set(item.data.get('keywords',[])).intersection({'Лёгкое','Легкое','Резервное'}):
+        return 'minor'
+    return 'main'

@@ -2542,3 +2542,37 @@ class GameTests(TestCase):
         self.post(self.alice,{**p,'reactions':{f'{self.b.pk}:1':'status:Влага'}})
         self.b.refresh_from_db();self.assertEqual([(e['status'],e['value']) for e in self.b.runtime['effects']],[('Оцепенение',5)])
         self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+
+    def test_light_and_reserve_weapons_draw_with_minor_action_and_undo(self):
+        self.start()
+        for keyword in ['Лёгкое','Легкое','Резервное']:
+            item=Item.objects.create(character=self.a,name='Оружие',data={'item_type':'weapon','dice':'1к4','keywords':[keyword]})
+            self.post(self.alice,{'op':'item.equip','id':item.pk})
+            self.a.refresh_from_db();item.refresh_from_db()
+            self.assertEqual((self.a.runtime['actions']['main'],self.a.runtime['actions']['minor']),(1,0))
+            self.assertTrue(item.equipped)
+            self.assertEqual(Event.objects.latest('id').inputs['equipment_action'],'minor')
+            self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();item.refresh_from_db()
+            self.assertFalse(item.equipped);self.assertEqual(self.a.runtime['actions']['minor'],1)
+
+    def test_drawing_weapon_obeys_conditions_turn_and_resources(self):
+        scene=self.start()
+        item=Item.objects.create(character=self.a,name='Кинжал',data={'item_type':'weapon','dice':'1к4','keywords':['Лёгкое']})
+        for status in ['Сон','Страх','Оглушение']:
+            self.a.refresh_from_db();self.a.runtime['effects']=[{'key':'block','name':status,'status':status,'value':1}]
+            self.a.runtime['stun_pending']=int(status=='Оглушение');self.a.save()
+            self.post(self.alice,{'op':'item.equip','id':item.pk},400)
+            item.refresh_from_db();self.assertFalse(item.equipped)
+        self.a.runtime['effects']=[];self.a.runtime['stun_pending']=0;self.a.runtime['actions']['minor']=0;self.a.save()
+        self.post(self.alice,{'op':'item.equip','id':item.pk},400)
+        self.a.runtime['actions']['minor']=1;self.a.save();self.turn(scene,self.alice)
+        self.post(self.alice,{'op':'item.equip','id':item.pk},400)
+
+    def test_quick_draw_property_does_not_make_removing_or_nonweapon_equipment_minor(self):
+        from .weaponry import equip_action
+        item=Item.objects.create(character=self.a,name='Кинжал',equipped=True,data={'item_type':'weapon','dice':'1к4','keywords':['Лёгкое']})
+        self.assertEqual(equip_action(item),'main')
+        item.equipped=False;item.data['item_type']='shield'
+        self.assertEqual(equip_action(item),'main')
+        item.data={'item_type':'weapon','dice':'1к8','keywords':['Метательное 5']}
+        self.assertEqual(equip_action(item),'main')

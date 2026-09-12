@@ -135,6 +135,7 @@ def serialize_char(c, user):
             'revision': c.revision, 'photo': f'/portrait/{c.id}/' if c.photo else '',
             'memberships': list(c.memberships.values('campaign_id', 'squad_id')),
             'items': list(c.items.filter(archived=False).values('id', 'revision', 'entry_id', 'name', 'quantity', 'equipped', 'slot', 'data')),
+            'minor_action_reason':availability(c,Entry(data={'action':'minor'}),scene,calc) if scene else '',
             'main_action_reason':availability(c,Entry(data={'action':'main'}),scene,calc) if scene else '',
             'scene_id': scene.id if scene else None}
 
