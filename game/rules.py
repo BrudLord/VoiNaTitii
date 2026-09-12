@@ -271,7 +271,14 @@ class Change:
         self.inputs.setdefault('dependencies',[])
         if key not in self.inputs['dependencies']:self.inputs['dependencies'].append(key)
 
-    def finish(self, record=False):
+    def absorb(self, other):
+        for key,obj in other.objects.items():
+            self.before.setdefault(key,other.before[key])
+            self.objects[key]=obj
+        for key in other.inputs.get('dependencies',[]):
+            if key not in self.inputs.setdefault('dependencies',[]):self.inputs['dependencies'].append(key)
+
+    def finish(self, record=False, defer_record=False):
         after = {}
         for key, obj in self.objects.items():
             value = item_snapshot(obj) if isinstance(obj,Item) else obj.state if isinstance(obj, Scene) else obj.runtime
@@ -281,7 +288,7 @@ class Change:
                     obj.revision+=1
                     obj.save(update_fields=ITEM_FIELDS+['revision'])
                 else:obj.save(update_fields=['state'] if isinstance(obj, Scene) else ['runtime'])
-        if after or record:
+        if not defer_record and (after or record):
             Event.objects.filter(actor=self.user, undone=True).update(redoable=False)
             Event.objects.create(actor=self.user, label=self.label, scene=self.scene,
                                  before={k: self.before[k] for k in after}, after=after, inputs=self.inputs)

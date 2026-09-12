@@ -2062,3 +2062,79 @@ class GameTests(TestCase):
         self.assertEqual(row,{'name':'Страх','source':self.b.name,'speed':6})
         self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],hp)
         self.assertEqual(self.a.runtime['effects'],[])
+
+    def weave_setup(self):
+        prepare=Entry.objects.create(kind='ability',name='Мистическое плетение',data={'circle':1,'action':'minor','category':'active'})
+        attack=Entry.objects.create(kind='ability',name='Стандартная атака',data={'system':True,'weapon':True,'damage':True,'formula':'1Ор','action':'main','circle':0})
+        spell=Entry.objects.create(kind='ability',name='Световая вспышка',data={'circle':1,'category':'active','action':'main','keywords':['Свет','Дальнобойный 5'],'target':'single','effects':[{'stat':'temp','value':5}]})
+        self.a.abilities.add(prepare,spell);self.a.level=8;self.a.save()
+        scene=self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':prepare.id,'targets':[]})
+        p={'op':'ability.use','character':self.a.id,'ability':attack.id,'targets':[self.b.id],'roll_result':'15','outcome':'miss',
+           'weave':{'ability':spell.id,'targets':[self.b.id],'outcome':'hit'}}
+        return scene,prepare,attack,spell,p
+
+    def test_weaving_combines_attack_and_spell_in_one_undoable_event(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        count=Event.objects.count();self.post(self.alice,p)
+        self.assertEqual(Event.objects.count(),count+1)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.assertEqual(self.a.runtime['used'][str(spell.pk)],1)
+        self.assertEqual(self.b.runtime['temp'],5)
+        self.assertNotIn('mystic_weaving',self.a.runtime)
+        self.assertEqual(Event.objects.latest('id').inputs['weaving']['spell'],spell.name)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertIn('mystic_weaving',self.a.runtime)
+        self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.assertEqual(self.b.runtime['temp'],0)
+        self.assertNotIn(str(spell.pk),self.a.runtime['used'])
+        self.post(self.alice,{'op':'redo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['temp'],5)
+
+    def test_invalid_woven_spell_rolls_back_attack_and_all_resources(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        self.a.refresh_from_db();before=json.loads(json.dumps(self.a.runtime));count=Event.objects.count()
+        for child in [{**p['weave'],'targets':[self.a.id]}, {**p['weave'],'ability':attack.pk}, {**p['weave'],'as_reaction':True}]:
+            self.post(self.alice,{**p,'weave':child},400)
+            self.a.refresh_from_db();self.assertEqual(self.a.runtime,before)
+            self.assertEqual(Event.objects.count(),count)
+        spell.data['rolls']=True;spell.save()
+        self.post(self.alice,p,400);self.a.refresh_from_db();self.assertEqual(self.a.runtime,before)
+
+    def test_weaving_area_requires_center_and_uses_selected_recipients(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        spell.data.update(keywords=['Свет','Сфера 2 в 5'],target='multiple');spell.save()
+        child={**p['weave'],'targets':[self.a.pk,self.b.pk]}
+        self.post(self.alice,{**p,'weave':child},400)
+        self.post(self.alice,{**p,'weave':{**child,'area_center_confirmed':True}})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual((self.a.runtime['temp'],self.b.runtime['temp']),(5,5))
+        self.assertEqual(Event.objects.latest('id').inputs['weaving']['center'],[self.b.pk])
+
+    def test_weaving_optional_spell_is_consumed_only_by_next_standard_attack(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        self.post(self.alice,{k:v for k,v in p.items() if k!='weave'})
+        self.a.refresh_from_db();self.assertNotIn('mystic_weaving',self.a.runtime)
+        self.assertNotIn(str(spell.pk),self.a.runtime['used'])
+        self.a.runtime['actions']['main']=1;self.a.save()
+        self.post(self.alice,p,400)
+
+    def test_weaving_cannot_use_exhausted_spell_or_skip_its_physical_dice(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        from .rules import limit
+        self.a.refresh_from_db();self.a.runtime['used'][str(spell.id)]=limit(self.a.level,1);self.a.save()
+        before=json.loads(json.dumps(self.a.runtime))
+        self.post(self.alice,p,400);self.a.refresh_from_db();self.assertEqual(self.a.runtime,before)
+
+    def test_woven_pool_preserves_dice_allocations_and_manual_healing(self):
+        scene,prepare,attack,spell,p=self.weave_setup()
+        spell.name='Исход небес';spell.data.update(keywords=['Свет','Вокруг 3'],effects=[],target='multiple');spell.save()
+        child={'ability':spell.pk,'area_center_confirmed':True,'dice':[1,2,3,4,5,6],
+               'dice_targets':[self.a.pk,None,self.b.pk,None,self.b.pk,None]}
+        self.post(self.alice,{**p,'weave':child});self.a.refresh_from_db();self.b.refresh_from_db()
+        pending=next(iter(self.a.runtime['pending_heals'].values()))
+        self.assertEqual(pending['allocations'],[{'character':self.a.pk,'hp':1},{'character':self.b.pk,'hp':8}])
+        self.assertEqual((self.a.runtime['hp'],self.b.runtime['hp']),(10,10))
+        event=Event.objects.latest('id');self.assertEqual(event.inputs['weaving']['inputs']['roll_pool']['damage_pool'],12)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertFalse(self.a.runtime.get('pending_heals'))
