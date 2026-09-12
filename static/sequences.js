@@ -19,8 +19,8 @@ function sequenceForm(a){
  },'К броскам');if(woven&&!a.weaving_area){dialogBody.querySelectorAll('.sequence-target').forEach(row=>{const select=row.querySelector('select'),field=row.querySelector('input');select.value=String(woven.attack.targets[0]||'');select.disabled=true;if(!select.value)field.value='Цель атаки на поле'})}sequenceTargetVisibility();
 }
 function sequenceTargetVisibility(){dialogBody.querySelectorAll('.sequence-target').forEach(row=>{const select=row.querySelector('select'),field=row.querySelector('input');field.closest('label').hidden=!!select.value;field.required=!select.value})}
-async function sequencePreview(capture,completed,plan=capture.plan){
- const response=await fetch('/api/sequence-preview/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},body:JSON.stringify({...capture.root,attacks:plan,completed})});
+async function sequencePreview(capture,completed,plan=capture.plan,draw=capture.pendingDraw?.index===completed?capture.pendingDraw.payload:plan[completed]?.draw_weapon){
+ const response=await fetch('/api/sequence-preview/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},body:JSON.stringify({...capture.root,attacks:plan,completed,...(draw?{pending_draw:draw}:{})})});
  const data=await response.json();if(!response.ok)throw Error(data.error||'Не удалось пересчитать серию');return data;
 }
 function sequenceReload(a,c){
@@ -29,6 +29,7 @@ function sequenceReload(a,c){
  return `<label class="notice"><input type="checkbox" name="series_reload" required> Перезарядить перед выстрелом · ${esc(label)} действие (${c.runtime.actions?.[action]||0})</label>`;
 }
 function sequenceReloadLog(row){return row?.reload?'<br>'+esc('Перезарядка · '+row.reload.name)+(typeof periodicDamageLog==='function'?periodicDamageLog(row.periodic_damage):''):''}
+function sequenceEquipmentLog(sequence){return (sequence?.attacks||[]).map(r=>drawWeaponLog(r.inputs.draw_weapon)+thrownWeaponLog(r.inputs.thrown_weapon)).join('')}
 function sequenceReloadsLog(sequence){return (sequence?.attacks||[]).filter(r=>r.reload).map(r=>'<br>'+esc('Перед атакой '+r.number+' · '+r.reload.reload.name+' перезаряжен')).join('')}
 function sequenceMovement(a){
  const s=a.attack_sequence,c=current(),directions=s.during_movement?['before','after']:s.one_per_step?['before']:s.step_after_attack?['after']:[];
@@ -40,13 +41,13 @@ function sequenceOpen(index,data){
  capture.index=index;sequenceCharacters=data.characters;
  const c=byId(data.characters,capture.root.character),a=c.abilities.find(a=>a.id===capture.root.ability),step=capture.plan[index];
  if(!a)throw Error('Умение больше недоступно');
- abilityForm({...a,_sequence:true,_draw_character:c});
+ abilityForm({...a,_sequence:true,_draw_character:c,...(data.draw_weapon?{_draw_weapon:data.draw_weapon}:{})});
  el('dialog-title').textContent=`${a.name} · ${index+1}/${capture.plan.length}`;
  dialogBody.querySelectorAll('[name="targets"]').forEach(field=>{field.checked=Number(field.value)===step.target;field.disabled=true});
  const list=dialogBody.querySelector('[name="targets"]')?.closest('.checklist');if(list){list.hidden=true;list.previousElementSibling.hidden=true}
  const roll=dialogBody.querySelector('[name=roll_result]');if(roll)roll.closest('label').firstChild.textContent=a.data.automatic_hit?'Бросок урона':'Бросок попадания и урона';
  dialogBody.insertAdjacentHTML('beforeend',sequenceReload(a,c)+sequenceMovement(a));
- dialogBody.insertAdjacentHTML('afterbegin','<div class="sequence-tools">'+btn('Пересчитать','series.refresh')+'</div>');
+ dialogBody.insertAdjacentHTML('afterbegin','<div class="sequence-tools">'+btn('Пересчитать','series.refresh')+(a.data.weapon&&carriedThrowingWeapons(c).length?btn('Достать оружие','series.draw'):'')+'</div>');
  updateReactionChoices();restoreSequenceFields(capture.forms[index]);updateReactionChoices();restoreSequenceFields(capture.forms[index]);updateAttackPreview();
  el('dialog-submit').textContent=index+1<capture.plan.length?'Следующий бросок':'Проверить серию';sequenceBackButton();
 }
@@ -58,9 +59,9 @@ async function submitSequence(payload){
  const c=sequenceCapture,index=c.index,step=c.plan[index],f=formObject();
  const row={...step};for(const key of ['outcome','roll_result','reactions','reaction_rolls','spreads','external_bp','external_conductor','external_prone','mark_source_included','mystic_arrows','charged_arrows','charged_target','exhaustion_target','miss_damage'])if(payload[key]!==undefined)row[key]=payload[key];
  for(const phase of ['before','after']){const cells=Number(f['series_cells:'+phase]||0);delete row['movement_'+phase];if(cells)row['movement_'+phase]={cells,cell_cost:Number(f['series_cost:'+phase]||1),terrain:Object.entries(f).filter(([key,value])=>key.startsWith('series_ice:'+phase+':')&&Number(value)).map(([key,value])=>({source:Number(key.split(':')[2]),cells:Number(value)}))}}
- const fields=sequenceFields();delete row.weave;delete row.reload_before;if(f.series_reload)row.reload_before=true;
+ const fields=sequenceFields();delete row.draw_weapon;if(payload.draw_weapon)row.draw_weapon=payload.draw_weapon;delete row.weave;delete row.reload_before;if(f.series_reload)row.reload_before=true;
  if(payload.weave_ability){
-  const plan=c.plan.map((value,i)=>i===index?row:value),data=await sequencePreview(c,index+1,plan);if(sequenceCapture!==c)return {next:()=>{}};
+  const plan=c.plan.map((value,i)=>i===index?row:value),data=await sequencePreview(c,index+1,plan,null);if(sequenceCapture!==c)return {next:()=>{}};
   const actor=byId(data.characters,c.root.character),spell=actor.abilities.find(a=>a.id===payload.weave_ability);
   if(!spell?.weavable)throw Error('Выберите магическое умение');
   const bridge={outer:c,index,row,fields,attack:payload,spell,characters:data.characters};
@@ -68,10 +69,20 @@ async function submitSequence(payload){
  }
  return sequenceAccept(c,index,row,fields,c);
 }
+function sequenceDrawForm(){
+ const capture=sequenceCapture,index=capture.index,actor=current(),items=carriedThrowingWeapons(actor);
+ capture.forms[index]=sequenceFields();
+ modal('Оружие для удара '+(index+1),selector('series_draw_item','Оружие',items,items[0]?.id)+selector('series_draw_mode','Способ атаки',[{id:'ranged',name:'Метнуть'},{id:'melee',name:'В ближнем бою'}],'ranged'),async()=>{
+  const f=formObject(),item=byId(items,Number(f.series_draw_item));if(!item)throw Error('Выберите оружие');
+  const draw={item:item.id,revision:item.revision,mode:f.series_draw_mode},data=await sequencePreview(capture,index,capture.plan,draw);
+  if(sequenceCapture!==capture)return {next:()=>{}};
+  capture.pendingDraw={index,payload:draw};return {next:()=>sequenceOpen(index,data)};
+ },'К броску');
+}
 function sequenceFields(){return [...dialogBody.querySelectorAll('[name]')].filter(n=>n.name!=='targets').map(n=>({name:n.name,value:n.value,checked:n.checked}))}
 async function sequenceAccept(c,index,row,fields,active){
  const plan=c.plan.map((value,i)=>i===index?row:value),data=await sequencePreview(c,index+1,plan);if(sequenceCapture!==active)return {next:()=>{}};
- sequenceCapture=c;sequenceBridge=null;c.commitKey=null;c.forms[index]=fields;c.plan=plan;
+ sequenceCapture=c;sequenceBridge=null;c.pendingDraw=null;c.commitKey=null;c.forms[index]=fields;c.plan=plan;
  return {next:()=>index+1<plan.length?sequenceOpen(index+1,data):sequenceReview(data)};
 }
 function sequenceSpell(bridge){
@@ -91,13 +102,14 @@ async function submitSequenceSpell(payload){
 function sequenceRevision(root,revision){return {...root,sequence_revision:revision,...(root.before_sequence?{before_sequence:sequenceRevision(root.before_sequence,revision)}:{})}}
 function sequenceReview(data){
  const c=sequenceCapture;c.index=c.plan.length;sequenceCharacters=data.characters;
- modal(c.ability.name+' · вся серия',`<div class="sequence-tools">${btn('Пересчитать','series.refresh')}</div><div class="log">${c.root.weave_parent?'<p><strong>Стандартная атака</strong><br>'+esc(c.root.weave_parent.roll_result)+'</p>':''}${c.plan.map((r,i)=>`<p><strong>${i+1}. ${esc(r.target?byId(data.characters,r.target).name:r.external_target)}</strong><br>${esc(r.roll_result)}${sequenceReloadLog(data.inputs.attack_sequence.attacks[i].reload)}${attackTargetLog(data.inputs.attack_sequence.attacks[i].inputs.attack_targets)}${typeof weavingLog==='function'?weavingLog(data.inputs.attack_sequence.attacks[i].inputs.weaving):''}${(data.inputs.attack_sequence.attacks[i].movement||[]).map(m=>movementLog(m)).join('')}</p>`).join('')}</div><p class="muted">Одно применение умения. Всю серию можно отменить.</p>`,async()=>{const {weave_parent,before_sequence,...root}=c.root,payload={...root,attacks:c.plan};if(c.returnBridge){const b=c.returnBridge;return sequenceAccept(b.outer,b.index,{...b.row,weave:payload},b.fields,c)}c.commitKey=c.commitKey||crypto.randomUUID();const result=await api(weave_parent?{...weave_parent,sequence_revision:root.sequence_revision,weave:payload}:payload,c.commitKey);if(sequenceCapture===c)clearSequence();return result},c.returnBridge?'Добавить к удару':'Применить серию');sequenceBackButton();
+ modal(c.ability.name+' · вся серия',`<div class="sequence-tools">${btn('Пересчитать','series.refresh')}</div><div class="log">${c.root.weave_parent?'<p><strong>Стандартная атака</strong><br>'+esc(c.root.weave_parent.roll_result)+'</p>':''}${c.plan.map((r,i)=>`<p><strong>${i+1}. ${esc(r.target?byId(data.characters,r.target).name:r.external_target)}</strong><br>${esc(r.roll_result)}${typeof drawWeaponLog==='function'?drawWeaponLog(data.inputs.attack_sequence.attacks[i].inputs.draw_weapon):''}${typeof thrownWeaponLog==='function'?thrownWeaponLog(data.inputs.attack_sequence.attacks[i].inputs.thrown_weapon):''}${sequenceReloadLog(data.inputs.attack_sequence.attacks[i].reload)}${attackTargetLog(data.inputs.attack_sequence.attacks[i].inputs.attack_targets)}${typeof weavingLog==='function'?weavingLog(data.inputs.attack_sequence.attacks[i].inputs.weaving):''}${(data.inputs.attack_sequence.attacks[i].movement||[]).map(m=>movementLog(m)).join('')}</p>`).join('')}</div><p class="muted">Одно применение умения. Всю серию можно отменить.</p>`,async()=>{const {weave_parent,before_sequence,...root}=c.root,payload={...root,attacks:c.plan};if(c.returnBridge){const b=c.returnBridge;return sequenceAccept(b.outer,b.index,{...b.row,weave:payload},b.fields,c)}c.commitKey=c.commitKey||crypto.randomUUID();const result=await api(weave_parent?{...weave_parent,sequence_revision:root.sequence_revision,weave:payload}:payload,c.commitKey);if(sequenceCapture===c)clearSequence();return result},c.returnBridge?'Добавить к удару':'Применить серию');sequenceBackButton();
 }
 document.addEventListener('change',e=>{if(e.target.name?.startsWith('series_target:'))sequenceTargetVisibility()});
 document.addEventListener('input',e=>{if(e.target.name!=='series_count')return;const a=pendingAbility,s=a.attack_sequence;if(s.targets==='same'||s.targets==='each')return;const n=Number(e.target.value);if(!Number.isInteger(n)||n<s.minimum||n>s.count)return;const box=el('series-targets'),f=formObject();box.innerHTML=sequenceTargets(n,f);box.dataset.groups=n;sequenceTargetVisibility()});
 document.addEventListener('click',async e=>{
  if(e.target.closest('[data-close]')){clearSequence();return}
  const b=e.target.closest('[data-do]');if(!b)return;
+ if(b.dataset.do==='series.draw'&&sequenceCapture&&!busy){sequenceDrawForm();return}
  if(['series.add','series.remove'].includes(b.dataset.do)){const box=el('series-targets'),n=Math.max(1,Number(box.dataset.groups)+(b.dataset.do==='series.add'?1:-1)),f=formObject();box.innerHTML=sequenceTargets(n,f);box.dataset.groups=n;sequenceTargetVisibility()}
  if(b.dataset.do==='series.refresh'&&sequenceCapture&&!busy){busy=true;b.disabled=true;try{const active=sequenceCapture;await refresh(true);const capture={...active,root:sequenceRevision(active.root,S.revision)},data=await sequencePreview(capture,capture.index);if(sequenceCapture!==active)return;sequenceCapture.root=capture.root;for(let b=active.returnBridge;b;b=b.outer.returnBridge)b.outer.root=sequenceRevision(b.outer.root,S.revision);if(capture.index===capture.plan.length)sequenceReview(data);else {sequenceCapture.forms[capture.index]=[...dialogBody.querySelectorAll('[name]')].filter(n=>n.name!=='targets').map(n=>({name:n.name,value:n.value,checked:n.checked}));sequenceOpen(capture.index,data)}}catch(error){el('dialog-error').textContent=error.message}finally{busy=false;b.disabled=false}}
  if(b.dataset.do==='series.spellback'&&!busy){const bridge=sequenceCapture?.returnBridge||sequenceBridge;if(!bridge)return;busy=true;b.disabled=true;const epoch=sequenceEpoch;try{const data=await sequencePreview(bridge.outer,bridge.index);if(epoch!==sequenceEpoch)return;sequenceCapture=bridge.outer;sequenceBridge=null;bridge.outer.forms[bridge.index]=bridge.fields;sequenceOpen(bridge.index,data)}catch(error){el('dialog-error').textContent=error.message}finally{busy=false;b.disabled=false}}

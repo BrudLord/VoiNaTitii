@@ -4014,3 +4014,62 @@ class GameTests(TestCase):
         self.post(self.alice,p)
         rows=Event.objects.latest('id').inputs['periodic_damage']
         self.assertEqual([(r['action'],r['damage']) for r in rows],[('main',3),('minor',3)])
+
+    def test_sequence_draws_each_throw_and_restores_entire_inventory(self):
+        old,item,attack,scene,base=self.thrown_setup()
+        attack.data['attack_sequence']={'count':2,'targets':'same'};attack.save()
+        item.quantity=2;item.save()
+        p={'op':'ability.use','character':self.a.pk,'ability':attack.pk,'attacks':[
+            {'target':self.b.pk,'outcome':'hit','roll_result':'17; 4','draw_weapon':base['draw_weapon']},
+            {'target':self.b.pk}]}
+        preview=self.sequence_preview_request(p,1);self.assertEqual(preview.status_code,200,preview.content[:500])
+        actor=next(c for c in preview.json()['characters'] if c['id']==self.a.pk)
+        remaining=next(i for i in actor['items'] if i['id']==item.pk)
+        self.assertEqual(remaining['quantity'],1);self.assertFalse(remaining['equipped'])
+        draw={'item':item.pk,'revision':remaining['revision'],'mode':'ranged'}
+        preview=self.sequence_preview_request({**p,'pending_draw':draw},1)
+        self.assertEqual(preview.status_code,200,preview.content[:500])
+        actor=next(c for c in preview.json()['characters'] if c['id']==self.a.pk)
+        self.assertEqual(actor['calc']['weapon_id'],item.pk)
+        item.refresh_from_db();self.assertEqual(item.quantity,2);self.assertFalse(item.equipped)
+        p['attacks'][1].update(outcome='critical',roll_result='20; 8',draw_weapon=draw)
+        before=Event.objects.count();self.post(self.alice,p)
+        self.assertEqual(Event.objects.count(),before+1);item.refresh_from_db();self.assertTrue(item.data['on_ground'])
+        rows=Event.objects.latest('id').inputs['attack_sequence']['attacks']
+        self.assertEqual([r['inputs']['draw_weapon']['item'] for r in rows],[item.pk,item.pk])
+        self.assertIn('к6',rows[1]['inputs']['attack_targets'][0]['damage'])
+        self.post(self.alice,{'op':'undo'});item.refresh_from_db();self.a.refresh_from_db()
+        self.assertEqual(item.quantity,2);self.assertFalse(item.equipped);self.assertFalse(item.data.get('on_ground'))
+        self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.assertEqual(self.a.items.filter(archived=False,data__on_ground=True).count(),0)
+
+    def test_sequence_draw_preview_rejects_stale_selection_and_completed_series(self):
+        old,item,attack,scene,base=self.thrown_setup();attack.data['attack_sequence']={'count':2,'targets':'same'};attack.save()
+        p={'character':self.a.pk,'ability':attack.pk,'attacks':[{'target':self.b.pk},{'target':self.b.pk}],
+           'pending_draw':{**base['draw_weapon'],'revision':item.revision+1}}
+        self.assertEqual(self.sequence_preview_request(p,0).status_code,400)
+        p['pending_draw']=base['draw_weapon'];p['attacks']=[{'target':self.b.pk,'outcome':'hit','roll_result':'18'}]*2
+        self.assertEqual(self.sequence_preview_request(p,2).status_code,400)
+        item.refresh_from_db();self.assertFalse(item.equipped)
+
+    def test_drawn_sequence_root_and_next_draw_share_stable_preview_revisions(self):
+        old,item,attack,scene,base=self.thrown_setup();item.quantity=2;item.save()
+        attack.data['attack_sequence']={'count':2,'targets':'same'};attack.save()
+        p={**base,'attacks':[{'target':self.b.pk,'outcome':'hit','roll_result':'17; 4'},{'target':self.b.pk}]}
+        first=self.sequence_preview_request(p,1);self.assertEqual(first.status_code,200,first.content[:500])
+        actor=next(c for c in first.json()['characters'] if c['id']==self.a.pk)
+        remaining=next(i for i in actor['items'] if i['id']==item.pk)
+        again=next(c for c in self.sequence_preview_request(p,1).json()['characters'] if c['id']==self.a.pk)
+        self.assertEqual(next(i['revision'] for i in again['items'] if i['id']==item.pk),remaining['revision'])
+        p['attacks'][1].update(outcome='hit',roll_result='18; 5',draw_weapon={'item':item.pk,'revision':remaining['revision'],'mode':'ranged'})
+        self.post(self.alice,p);self.post(self.alice,{'op':'undo'})
+        item.refresh_from_db();self.assertEqual(item.quantity,2);self.assertFalse(item.equipped)
+
+    def test_learned_swift_strikes_exposes_double_standard_attack_to_player(self):
+        from .views import serialize_char
+        old,item,attack,scene,base=self.thrown_setup()
+        passive=Entry.objects.create(kind='ability',name='Стремительные удары',data={'category':'passive'})
+        self.a.abilities.add(passive)
+        self.assertEqual(next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)['attack_sequence'],{'count':2,'targets':'any'})
+        self.a.abilities.remove(passive)
+        self.assertIsNone(next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)['attack_sequence'])

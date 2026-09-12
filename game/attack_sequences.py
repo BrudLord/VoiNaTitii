@@ -144,7 +144,7 @@ STEP_FIELDS = {
     'number', 'target', 'external_target', 'outcome', 'roll_result', 'reactions',
     'reaction_rolls', 'spreads', 'external_bp', 'external_conductor', 'external_prone',
     'mark_source_included', 'mystic_arrows', 'charged_arrows', 'charged_target',
-    'exhaustion_target', 'miss_damage', 'movement_before', 'movement_after', 'weave', 'reload_before',
+    'exhaustion_target', 'miss_damage', 'movement_before', 'movement_after', 'weave', 'reload_before', 'draw_weapon',
 }
 
 

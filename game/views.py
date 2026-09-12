@@ -94,7 +94,7 @@ def home(request):
 
 def serialize_char(c, user):
     from .disarm import profile as disarm_profile
-    from .attack_sequences import profile as sequence_profile
+    from .attack_sequences import effective_profile as sequence_profile
     scene = current_scene(c)
     from .personal_abilities import definition as ability_definition
     abilities = []
@@ -120,7 +120,7 @@ def serialize_char(c, user):
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'definition':definition,'id': a.id, 'name': a.display_name, 'description': a.description, 'data': d,
                           'roll_conditions':targeting.roll_conditions(a,calc),'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
-                          'attack_setup':setup, 'charged_arrows':charged,'damage_reduction':defense,'attack_sequence':sequence_profile(a),
+                          'attack_setup':setup, 'charged_arrows':charged,'damage_reduction':defense,'attack_sequence':sequence_profile(a,c),
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
                           'weavable':weaving.magical(a),'weaving_area':weaving.area(a),
                           'physical_weapon_units':targeting.physical_weapon_units(a,calc),
@@ -1045,7 +1045,7 @@ def simulate_sequence(user,p,revision,depth=0):
         else:
             planned.append({k:copy.deepcopy(v) for k,v in row.items() if k in ['target','external_target']})
             planned[-1].update(outcome='miss',roll_result='Не выполнено')
-    child={k:v for k,v in p.items() if k not in ['weave_parent','before_sequence']}
+    child={k:v for k,v in p.items() if k not in ['weave_parent','before_sequence','pending_draw']}
     child.update(op='ability.use',attacks=planned)
     payload={**parent,'op':'ability.use','character':p['character'],'sequence_revision':revision,'weave':child} if parent is not None else child
     change=use_ability(user,payload,preview_steps=completed,sequence_step=context is not None)
@@ -1062,8 +1062,16 @@ def sequence_preview(request):
         with transaction.atomic():
             clock=Clock.objects.select_for_update().get(pk=1)
             change,inputs=simulate_sequence(request.user,p,clock.revision)
+            characters=list(Character.objects.filter(pk__in=change.scene.state['order']))
+            if 'pending_draw' in p:
+                from . import thrown
+                ability=get_object_or_404(Entry,pk=p['ability'],kind='ability',archived=False)
+                if p['completed']>=len(p['attacks']) or not ability.data.get('weapon'):
+                    raise ValueError('Оружие выбирается перед оружейной атакой')
+                characters=[thrown.preview(c,p['pending_draw']) if c.pk==p['character'] else c for c in characters]
             result={'revision':clock.revision,'completed':p['completed'],'inputs':inputs,
-                    'characters':[serialize_char(c,request.user) for c in Character.objects.filter(pk__in=change.scene.state['order'])]}
+                    'characters':[serialize_char(c,request.user) for c in characters],
+                    **({'draw_weapon':p['pending_draw']} if 'pending_draw' in p else {})}
             transaction.set_rollback(True)
         return JsonResponse(result)
     except Http404:return JsonResponse({'error':'Запись не найдена'},status=404)

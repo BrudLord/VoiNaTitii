@@ -320,8 +320,10 @@ class Change:
             if value != self.before[key]:
                 after[key] = copy.deepcopy(value)
                 if isinstance(obj,Item):
-                    obj.revision+=1
-                    obj.save(update_fields=ITEM_FIELDS+['revision'])
+                    if getattr(obj,'_change_saved_snapshot',None)!=value:
+                        obj.revision+=1
+                        obj.save(update_fields=ITEM_FIELDS+['revision'])
+                        obj._change_saved_snapshot=copy.deepcopy(value)
                 else:obj.save(update_fields=['state'] if isinstance(obj, Scene) else ['runtime'])
         if not defer_record and (after or record):
             Event.objects.filter(actor=self.user, undone=True).update(redoable=False)

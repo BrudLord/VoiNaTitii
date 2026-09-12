@@ -19,7 +19,7 @@ test('a canceled pending preview never starts a new sequence',async()=>{
 test('a completed attack copies only attack fields and leaves the future plan unrolled',async()=>{
  const t=setup();t.run("sequenceCapture={index:0,root:{character:1,ability:7,sequence_revision:12},plan:[{target:2,external_target:''},{target:2,external_target:''}],forms:[]}");
  await t.ctx.submitSequence({character:999,ability:999,outcome:'critical',roll_result:'20; урон 8',reactions:{},draw_weapon:{item:6}});
- const body=t.ctx.request.body;assert.equal(body.completed,1);assert.equal(body.character,1);assert.equal(body.ability,7);assert.equal(body.attacks[0].outcome,'critical');assert.equal(body.attacks[1].outcome,undefined);assert.equal(body.attacks[0].draw_weapon,undefined);assert.equal(t.ctx.writes.length,0);
+ const body=t.ctx.request.body;assert.equal(body.completed,1);assert.equal(body.character,1);assert.equal(body.ability,7);assert.equal(body.attacks[0].outcome,'critical');assert.equal(body.attacks[1].outcome,undefined);assert.equal(body.attacks[0].draw_weapon.item,6);assert.equal(t.ctx.writes.length,0);
 });
 test('failed preview preserves existing rolls for correction',async()=>{
  const t=setup();t.run("sequenceCapture={index:0,root:{},plan:[{target:2,roll_result:'старый'}],forms:[]}");t.ctx.fetch=async()=>({ok:false,json:async()=>({error:'Реакция изменилась'})});
@@ -68,4 +68,14 @@ test('reload prompt only appears for a discharged weapon attack',()=>{
  const t=setup(),c={calc:{needs_reload:true,reload_action:'minor'},runtime:{actions:{minor:1}}};
  assert.match(t.ctx.sequenceReload({data:{weapon:true}},c),/required/);assert.match(t.ctx.sequenceReload({data:{weapon:true}},c),/малое действие \(1\)/);
  assert.equal(t.ctx.sequenceReload({data:{damage:true}},c),'');c.calc.needs_reload=false;assert.equal(t.ctx.sequenceReload({data:{weapon:true}},c),'');
+});
+test('the next draw is previewed against the completed prefix without saving an attack',async()=>{
+ const t=setup();t.run("sequenceCapture={root:{character:1,ability:7},plan:[{target:2,roll_result:'17'},{target:2}],pendingDraw:{index:1,payload:{item:6,revision:3,mode:'ranged'}}}");
+ await t.ctx.sequencePreview(t.run('sequenceCapture'),1);
+ assert.equal(t.ctx.request.body.completed,1);assert.equal(t.ctx.request.body.pending_draw.item,6);assert.equal(t.ctx.request.body.attacks[1].roll_result,undefined);assert.equal(t.ctx.writes.length,0);
+ await t.ctx.sequencePreview(t.run('sequenceCapture'),2);assert.equal(t.ctx.request.body.pending_draw,undefined);
+});
+test('revisiting a drawn attack requests its weapon preview again',async()=>{
+ const t=setup(),c={root:{},plan:[{target:2,draw_weapon:{item:6,revision:3,mode:'ranged'}}]};
+ await t.ctx.sequencePreview(c,0);assert.equal(t.ctx.request.body.pending_draw.revision,3);
 });
