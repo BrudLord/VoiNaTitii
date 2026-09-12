@@ -38,12 +38,15 @@ def computed(c):
     effects.extend({**e,**({'ability_scope':'weapon' if i.data.get('dice') else 'focus'} if (i.data.get('dice') or i.data.get('item_type')=='focus') and e.get('stat') in ['hit','damage'] else {})} for i in equipped for e in i.data.get('effects',[])
                    if not ((i.data.get('dice') and i!=selected or i.data.get('item_type')=='focus' and i.id!=focus_id) and e.get('stat') in ['hit','damage']))
     learned = [a for a in c.abilities.all() if not a.archived]
-    wide_swing=any(a.name=='Широкий замах' for a in learned)
+    from .weaponry import wide_swing_profile
+    swings=[(a,wide_swing_profile(a)) for a in learned if wide_swing_profile(a) is not None]
     weapon_words=held_keywords(selected.data) if selected else []
-    if wide_swing:
-        effects.append({'name':'Широкий замах','stat':'hit','value':1})
-        if 'Двуручное' in weapon_words and not any(re.fullmatch(r'Досягаемость [1-9]\d*',w) for w in weapon_words):
-            weapon_words.append('Досягаемость 1')
+    for ability,profile in swings:
+        effects.append({'name':ability.name,'stat':'hit','value':profile['hit']})
+    if 'Двуручное' in weapon_words and swings:
+        reach=max([p['reach'] for a,p in swings]+[int(m[1]) for w in weapon_words if (m:=re.fullmatch(r'Досягаемость (\d+)',w))])
+        weapon_words=[w for w in weapon_words if not re.fullmatch(r'Досягаемость (\d+)',w)]
+        if reach:weapon_words.append('Досягаемость '+str(reach))
     for ability in learned:
         if ability.data.get('category') == 'passive' and not ability.data.get('aura') and not ability.data.get('manual'):
             effects.extend(e for e in ability.data.get('effects', []) if not e.get('manual'))

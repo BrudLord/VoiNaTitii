@@ -120,4 +120,6 @@ def abilities(text):
             else:
                 data['automation_notes']='Выбранные получатели видят ауру в листе. Особые последствия и срабатывания — по описанию.'
 
+        if clean(m[1])=='Широкий замах':
+            data['wide_swing']={'hit':1,'reach':1}
         yield clean(m[1]),description,data,f'Книга, строка {before.count(chr(10))+1}'

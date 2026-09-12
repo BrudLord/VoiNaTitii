@@ -139,3 +139,17 @@ def equip_action(item):
     if not item.equipped and not item.data.get('on_ground') and item.data.get('item_type')=='weapon' and set(item.data.get('keywords',[])).intersection({'Лёгкое','Легкое','Резервное'}):
         return 'minor'
     return 'main'
+
+
+def wide_swing_profile(ability):
+    default={'hit':1,'reach':1} if ability.name=='Широкий замах' else None
+    return ability.data.get('wide_swing',default)
+
+
+def validate_wide_swing(data):
+    if 'wide_swing' not in data:return
+    profile=data['wide_swing']
+    if not isinstance(profile,dict) or set(profile)!={'hit','reach'}:
+        raise ValueError('Укажите бонус попадания и досягаемость Широкого замаха')
+    if type(profile['hit']) is not int or not -1000<=profile['hit']<=1000 or type(profile['reach']) is not int or not 0<=profile['reach']<=100:
+        raise ValueError('Некорректные параметры Широкого замаха')

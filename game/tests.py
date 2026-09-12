@@ -2780,3 +2780,24 @@ class GameTests(TestCase):
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
         row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==attack.pk)
         self.assertEqual(row['data']['range'],'Ближний')
+
+    def test_wide_swing_profile_is_editable_and_survives_renaming(self):
+        passive=Entry.objects.create(kind='ability',name='Широкий замах',data={'category':'passive'})
+        self.a.abilities.add(passive)
+        Item.objects.create(character=self.a,name='Молот',equipped=True,data={'dice':'1к10','keywords':['Двуручное']})
+        payload={'op':'entry.save','id':passive.pk,'kind':'ability','name':'Усиленный замах','description':'Изменение мастера','data':{'category':'passive','wide_swing':{'hit':2,'reach':3}}}
+        self.post(self.alice,payload,403)
+        self.post(self.gm,payload)
+        calc=computed(self.a);self.assertEqual(calc['hit'],2);self.assertEqual(calc['weapon_reach'],3)
+        payload['data']['wide_swing']={'hit':0,'reach':0};self.post(self.gm,payload)
+        calc=computed(self.a);self.assertEqual(calc['hit'],0);self.assertEqual(calc['weapon_reach'],0)
+        for profile in [None,{}, {'hit':True,'reach':1},{'hit':2,'reach':-1},{'hit':2,'reach':1,'unknown':True}]:
+            payload['data']['wide_swing']=profile;self.post(self.gm,payload,400)
+        self.assertEqual(computed(self.a)['hit'],0)
+
+    def test_book_compiles_editable_wide_swing_profile(self):
+        from .book_audit import abilities
+        from django.conf import settings
+        rows=[data for name,desc,data,source in abilities((settings.BASE_DIR/'rules/player-book.txt').read_text()) if name=='Широкий замах']
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['wide_swing'],{'hit':1,'reach':1})

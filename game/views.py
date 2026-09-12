@@ -689,6 +689,7 @@ def execute(user, p):
 def validate_entry(d):
     enchantments.validate_profile(d)
     weaponry.validate_profile(d)
+    weaponry.validate_wide_swing(d)
     if not isinstance(d,dict):
         raise ValueError('Параметры должны быть объектом')
     for key in ['formula', 'dice', 'stat', 'source_name']:
