@@ -2138,3 +2138,67 @@ class GameTests(TestCase):
         self.assertEqual((self.a.runtime['hp'],self.b.runtime['hp']),(10,10))
         event=Event.objects.latest('id');self.assertEqual(event.inputs['weaving']['inputs']['roll_pool']['damage_pool'],12)
         self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.assertFalse(self.a.runtime.get('pending_heals'))
+
+    def support_setup(self,mode='Земля',mastery=False):
+        support=Entry.objects.create(kind='ability',name='Стихийная поддержка',data={'circle':1,'category':'active','action':'main','formula':'Мод','damage':True,'rolls':True})
+        self.a.abilities.add(support)
+        if mastery:self.a.abilities.add(Entry.objects.create(kind='ability',name='Стихийное превосходство',data={'category':'passive'}))
+        self.a.level=8;self.a.save();scene=self.start()
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':support.pk,'stance_mode':mode,'targets':[]})
+        self.a.refresh_from_db()
+        return support,scene
+
+    def test_support_switch_changes_ac_step_and_undo_without_spending_another_use(self):
+        support,scene=self.support_setup()
+        self.assertEqual(computed(self.a)['ac'],7)
+        self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.post(self.alice,{'op':'stance.switch','character':self.a.id,'stance_mode':'Воздух'})
+        self.a.refresh_from_db();calc=computed(self.a)
+        self.assertEqual((calc['ac'],calc['step']),(5,3))
+        self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.assertEqual(self.a.runtime['used'][str(support.pk)],1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(computed(self.a)['ac'],7)
+        self.assertEqual(self.a.runtime['actions']['minor'],1)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.assertEqual(computed(self.a)['step'],3)
+
+    def test_support_fire_applies_only_to_unlimited_damage_without_multiplying_on_crit(self):
+        support,scene=self.support_setup('Огонь')
+        ability=Entry(name='Огонь',data={'damage':True,'formula':'1к6','circle':0})
+        self.assertEqual(formula(self.a,ability),'1к6 +3')
+        self.assertEqual(formula(self.a,ability,True),'2к6 +3')
+        ability.data['circle']=1;self.assertEqual(formula(self.a,ability),'1к6')
+        support.archived=True;support.save();ability.data['circle']=0
+        self.assertEqual(formula(self.a,ability),'1к6')
+
+    def test_support_water_uses_mod_manual_healing_once_per_global_turn(self):
+        support,scene=self.support_setup('Вода')
+        p={'op':'stance.water','character':self.a.pk,'target':self.b.pk,'in_range':True}
+        self.post(self.alice,{**p,'in_range':False},400)
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        pending=next(iter(self.a.runtime['pending_heals'].values()))
+        self.assertEqual(pending['allocations'],[{'character':self.b.pk,'hp':3}])
+        self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,p,400)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertFalse(self.a.runtime.get('pending_heals'))
+        self.post(self.alice,p)
+        self.turn(scene,self.alice);self.post(self.alice,p)
+
+    def test_support_mastery_changes_activation_cost_resistance_and_water_cleanse(self):
+        support,scene=self.support_setup('Земля',mastery=True)
+        self.assertEqual((self.a.runtime['actions']['main'],self.a.runtime['actions']['minor']),(1,0))
+        self.assertEqual(computed(self.a)['resistance'],3)
+        self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.post(self.alice,{'op':'stance.switch','character':self.a.id,'stance_mode':'Вода'})
+        self.b.refresh_from_db();self.b.runtime['effects']=[{'key':'slow','name':'Замедление','stat':'speed','value':-2,'duration':'turns','remaining':3}];self.b.save()
+        self.post(self.alice,{'op':'stance.water','character':self.a.pk,'target':self.b.pk,'in_range':True,'remove':'slow'})
+        self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'],[])
+        self.post(self.alice,{'op':'undo'});self.b.refresh_from_db();self.assertEqual(len(self.b.runtime['effects']),1)
+
+    def test_support_switch_permissions_and_turn_are_enforced(self):
+        support,scene=self.support_setup()
+        p={'op':'stance.switch','character':self.a.id,'stance_mode':'Вода'}
+        self.post(self.bob,p,403)
+        self.post(self.alice,{**p,'stance_mode':'Тьма'},400)
+        self.turn(scene,self.alice);self.post(self.alice,p,400)

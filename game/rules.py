@@ -26,8 +26,11 @@ def computed(c):
     enchantments, focus_id = equipment(c, equipped, selected)
     from .weaponry import upgrades, versatile, held_keywords, reload_action
     from .passives import lightning_reflexes
+    from .stances import mode, learned as stance_learned
+    support=mode(c);support_mastery=stance_learned(c,'Стихийное превосходство')
     weapon_upgrades=upgrades(selected) if selected else []
     effects = list(c.runtime.get('effects', []))
+    if support=='Земля':effects.append({'name':'Стихийная поддержка · Земля','stat':'ac','value':2})
     if selected and selected.data.get('accuracy_oil'):
         effects.append({'stat':'hit','value':1,'ability_scope':'weapon','name':'Масло точности'})
     effects.extend({'stat':'hit','value':p['hit'],'ability_scope':'weapon'} for p in weapon_upgrades if p.get('hit'))
@@ -112,7 +115,8 @@ def computed(c):
             'weapon_stat': weapon_school, 'weapon': weapon, 'crit': crit,
             'weapon_id':weapon_item,'weapon_proficient':weapon_proficient,'weapon_hit':weapon_hit,
             'unarmed':selected is None,'extra_hp':extra_hp,'racial_ac':int(rd.get('ac_bonus',0)),
-            'step':int(rd.get('step',1)),'resistance':int(rd.get('resistance',0)),
+            'support':support,'support_mastery':support_mastery,
+            'step':3 if support=='Воздух' else int(rd.get('step',1)),'resistance':int(rd.get('resistance',0))+(3 if support=='Земля' and support_mastery else 0),
             'skills':skill_values(c,mods,klass),'effects':effects,
             'keywords': keywords, 'reactions': max(1, mods['wis'])*(2 if lightning_reflexes(c) else 1), 'orc': bool(rd.get('orc'))}
 
@@ -164,6 +168,8 @@ def formula(c, ability, critical=False, calc=None, scene=None):
     result = re.sub(r'-\s*-','+',result)
     from .enchantments import for_ability, ability_bonus
     damage = ability_bonus(calc,ability,'damage') + sum(p.get('damage',0) for p in for_ability(calc,ability))
+    if calc.get('support')=='Огонь' and int(d.get('circle',0))==0 and d.get('category','active')=='active':
+        damage+=calc['mods'][calc['primary']]
     if result and d.get('damage', False) and damage:
         result += f' {damage:+d}'
     from .passives import boulder_bonus

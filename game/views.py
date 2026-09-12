@@ -3,7 +3,7 @@ import difflib
 import io
 import json
 import uuid
-from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows, charged_arrows, targeting, weaving
+from . import enchantments, roll_pools, knowledge, weaponry, crafting, mystic_arrows, prepared_attacks, seeking_arrows, charged_arrows, targeting, weaving, stances
 from .models import JournalEntry
 from .passives import boulder_bonus, turn_token, reflex_eligible
 from .alignment import schema as alignment_schema, validate_alignment
@@ -98,7 +98,7 @@ def serialize_char(c, user):
     learned = {a.id:a for a in c.abilities.all() if not a.archived}
     learned.update({a.id:a for a in Entry.objects.filter(kind='ability',data__system=True,archived=False)})
     for a in learned.values():
-        a = seeking_arrows.effective(a)
+        a = stances.effective(c,seeking_arrows.effective(a))
         d = copy.deepcopy(a.data)
         charged=charged_arrows.profile(c,a)
         if charged and charged['prepare']:d['manual']=False
@@ -111,7 +111,7 @@ def serialize_char(c, user):
             d['range']=next((k for k in d['keywords'] if k.startswith(('Дальнобойный','Ближний','Вокруг','Сфера'))),d.get('range',''))
         hit_bonus = targeting.hit_bonus(c,a,calc)
         abilities.append({'id': a.id, 'name': a.name, 'description': a.description, 'data': d,
-                          'mystic_arrows':mystic_arrows.profile(c,a,calc),
+                          'mystic_arrows':mystic_arrows.profile(c,a,calc),'stance_modes':stances.MODES if a.name==stances.NAME else None,
                           'attack_setup':setup, 'charged_arrows':charged,
                           'weaving':{'prepare':True} if a.name==weaving.NAME else {'ready':True} if c.runtime.get('mystic_weaving') and weaving.standard(a) else None,
                           'weavable':weaving.magical(a),'weaving_area':weaving.area(a),
@@ -418,7 +418,7 @@ def execute(user, p):
             change.watch(c)
             for item in c.items.filter(equipped=True,archived=False):change.depend(item)
             enchantments.start_battle(c,computed(c))
-            c.runtime.pop('mystic_weaving',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
+            c.runtime.pop('elemental_support',None);c.runtime.pop('mystic_weaving',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
             c.runtime.pop('exhaustion_transfer',None)
             c.runtime.update(used={}, mystic_arrows=0, actions={**ACTIONS, 'reaction': computed(c)['reactions']}, turns=0,
                              stun_pending=min(3,sum(abs(e.get('value',1)) for e in c.runtime.get('effects',[]) if status_name(e) in ['Оглушение','Оцепенение','Заморозка'])) if c.id==order[0] else 0)
@@ -446,7 +446,7 @@ def execute(user, p):
             for c in chars.values():
                 from .alchemy import end_battle
                 end_battle(change,c)
-                c.runtime.pop('mystic_weaving',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
+                c.runtime.pop('elemental_support',None);c.runtime.pop('mystic_weaving',None);c.runtime.pop('charged_arrows',None);c.runtime.pop('missed_standard',None)
                 c.runtime.pop('exhaustion_transfer',None)
                 c.runtime.pop('readied',None);c.runtime.pop('readied_queue',None);c.runtime.pop('initiative_shift',None)
                 c.runtime.update(pending_heals={},enchantment_uses={},effects=[], used={}, mystic_arrows=0, temp=0, stun_pending=0, actions=dict(ACTIONS))
@@ -566,6 +566,8 @@ def execute(user, p):
             t.runtime['hp']=min(computed(t)['max_hp'],t.runtime.get('hp',0)+row['hp'])
         del c.runtime['pending_heals'][p['pending']]
         change.finish()
+    elif op in ['stance.switch','stance.water']:
+        stances.mutate(user,p)
     elif op == 'enchantment.kill':
         c=owned(user,p['character'])
         scene=current_scene(c)
@@ -719,7 +721,7 @@ def use_ability(user, p, embedded=False):
     a = get_object_or_404(Entry, pk=p['ability'],kind='ability',archived=False)
     if not a.data.get('system') and not c.abilities.filter(pk=a.pk).exists():
         raise PermissionDenied('Персонаж не владеет этим умением')
-    a = seeking_arrows.effective(a)
+    a = stances.effective(c,seeking_arrows.effective(a))
     scene = current_scene(c)
     if not scene:
         raise ValueError('Умение можно применить в активном бою')
@@ -754,6 +756,7 @@ def use_ability(user, p, embedded=False):
     charged=charged_arrows.resolve(c,a,p,ids) if not aura else None
     setup=prepared_attacks.validate(c,a,p,ids) if not aura else None
     weave=weaving.resolve(c,a,p,ids) if not aura else None
+    stance=stances.activation(c,a,p) if not aura else None
     change = Change(user, ('Получатели ауры · ' if aura else '') + a.name + ' · ' + c.name, scene,
                     inputs={'outcome': p.get('outcome'), 'roll_result': str(p.get('roll_result', ''))[:2000], 'targets': ids,'reactions':p.get('reactions',{})})
     change.watch(c)
@@ -835,6 +838,9 @@ def use_ability(user, p, embedded=False):
     mystic_arrows.apply(change,c,[targets[pk] for pk in ids],arrows,p)
     targeting.finalize(change)
     if not aura:weaponry.discharge(change,c,a)
+    if stance:
+        c.runtime['elemental_support']=stance
+        change.inputs['stance_mode']=stance['mode']
     if weave:
         if weave['prepare']:c.runtime['mystic_weaving']={'ability':a.pk}
         else:c.runtime.pop('mystic_weaving',None)
