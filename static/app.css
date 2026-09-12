@@ -66,3 +66,7 @@
 .draw-attacks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}.draw-attacks .card{padding:12px;margin:0}.draw-attacks .card[hidden]{display:none}.draw-attacks p{margin:8px 0}.draw-attacks h3{margin:0 0 6px}.draw-attacks .formula{font-size:1rem}@media(max-width:600px){.draw-attacks{grid-template-columns:1fr}}
 
 .inventory-toolbar h2{margin:0}.inventory-toolbar .stock-undo{margin:0 0 0 auto}.inventory-toolbar+.toolbar{margin-top:0}
+
+.stock-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}.stock-filters>input{flex:1 1 240px;min-width:160px}.stock-filters>.f-select{flex:0 1 160px}.stock-filters .f-select-button{min-width:130px}.stock-result-count:empty{display:none}.stock-result-count{font-size:.8rem;margin:4px 0}.stock-group h3{font-size:.8rem;color:var(--muted);margin:12px 0 0}.stock-filters [hidden]{display:none}@media(max-width:600px){.stock-filters>input{flex-basis:100%}.stock-filters>.f-select{flex:1 1 120px}}
+
+.stock-browser .stock-row{padding:8px 0}
