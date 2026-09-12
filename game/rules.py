@@ -181,6 +181,9 @@ def availability(c, ability, scene=None, calc=None, readied=False, as_reaction=F
         return 'Только вне боя' if scene else ''
     if not scene:
         return 'Начните бой'
+    if getattr(ability,'name','')=='Передача истощения':
+        from .prepared_attacks import exhaustion
+        if not exhaustion(c):return 'Нет истощения маны для передачи'
     from .statuses import status_name
     statuses={status_name(e) for e in c.runtime.get('effects',[])}
     if statuses.intersection({'Сон','Страх'}):

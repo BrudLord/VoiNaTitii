@@ -7135,7 +7135,8 @@
         "source_name"
       ],
       "candidate_handlers": [
-        "game.views.use_ability: actions/charges"
+        "game.views.use_ability: actions/charges",
+        "game.prepared_attacks"
       ],
       "verification": "needs_scenario_review"
     },

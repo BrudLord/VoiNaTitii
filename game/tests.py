@@ -1296,3 +1296,90 @@ class GameTests(TestCase):
         self.assertEqual(len(self.b.runtime['effects']),1)
         freeze=self.b.runtime['effects'][0]
         self.assertEqual((freeze['status'],freeze['value'],freeze['duration']),('Заморозка',6,'actions'))
+
+
+    def transfer_setup(self):
+        scene,p,_,_=self.mystic_setup()
+        self.a.refresh_from_db();self.a.level=8
+        self.a.runtime['mystic_arrows']=3
+        self.a.runtime['effects']=[{'key':'status:Истощение маны','status':'Истощение маны','name':'Истощение маны','stat':'hit','value':-2,'duration':'battle'}]
+        self.a.save()
+        ability=Entry.objects.create(kind='ability',name='Передача истощения',data={'category':'active','action':'minor','circle':2})
+        self.a.abilities.add(ability)
+        prepare={'op':'ability.use','character':self.a.id,'ability':ability.id,'targets':[]}
+        return scene,p,prepare
+
+    def test_transfer_snapshots_strength_survives_miss_and_supports_undo(self):
+        scene,p,prepare=self.transfer_setup()
+        self.post(self.alice,prepare);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.assertEqual(self.a.runtime['used'][str(prepare['ability'])],1)
+        self.post(self.alice,{**p,'outcome':'miss','mystic_arrows':['shift']});self.a.refresh_from_db()
+        self.assertEqual(computed(self.a)['hit'],-3)
+        self.assertEqual(self.a.runtime['exhaustion_transfer']['strength'],2)
+        self.turn(scene,self.alice);self.turn(scene,self.bob)
+        self.post(self.alice,{**p,'mystic_arrows':['shift']});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(computed(self.a)['hit'],-4);self.assertEqual(computed(self.b)['hit'],-2)
+        self.assertNotIn('exhaustion_transfer',self.a.runtime)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['exhaustion_transfer']['strength'],2);self.assertEqual(computed(self.b)['hit'],0)
+        self.post(self.alice,{'op':'redo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertNotIn('exhaustion_transfer',self.a.runtime);self.assertEqual(computed(self.b)['hit'],-2)
+
+    def test_transfer_selects_one_target_and_adds_to_existing_exhaustion(self):
+        scene,p,prepare=self.transfer_setup();self.post(self.alice,prepare)
+        attack=Entry.objects.create(kind='ability',name='Атака по площади',data={'category':'active','damage':True,'formula':'1к6','action':'main'})
+        self.a.abilities.add(attack)
+        q={'op':'ability.use','character':self.a.id,'ability':attack.id,'targets':[self.a.id,self.b.id],'roll_result':'4'}
+        self.post(self.alice,q,400);self.post(self.alice,{**q,'exhaustion_target':9999},400)
+        self.post(self.bob,{**q,'exhaustion_target':self.b.id},403)
+        self.b.runtime['effects']=[{'key':'status:Истощение маны','status':'Истощение маны','stat':'hit','value':-1,'duration':'battle'}];self.b.save()
+        self.post(self.alice,{**q,'exhaustion_target':self.b.id});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(computed(self.a)['hit'],-2);self.assertEqual(computed(self.b)['hit'],-3)
+        self.assertEqual(self.b.runtime['hp'],10)
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**q,'exhaustion_target':0});self.b.refresh_from_db()
+        self.assertEqual(computed(self.b)['hit'],-1)
+        self.assertEqual(Event.objects.filter(actor=self.alice).latest('id').inputs['exhaustion_transfer']['target'],'Цель на игровом поле')
+
+    def test_transfer_requires_exhaustion_and_is_cleared_at_battle_end(self):
+        from .views import serialize_char
+        scene,p,prepare=self.transfer_setup()
+        self.post(self.alice,{**prepare,'targets':[self.b.id]},400)
+        self.a.runtime['effects']=[];self.a.save()
+        self.post(self.alice,prepare,400)
+        row=next(a for a in serialize_char(self.a,self.alice)['abilities'] if a['id']==prepare['ability'])
+        self.assertEqual(row['reason'],'Нет истощения маны для передачи')
+        self.a.runtime['effects']=[{'key':'status:Истощение маны','status':'Истощение маны','stat':'hit','value':-2,'duration':'battle'}];self.a.save()
+        self.post(self.alice,prepare)
+        self.post(self.alice,{'op':'ability.use','character':self.a.id,'ability':self.bless.id,'targets':[self.b.id]})
+        self.a.refresh_from_db();self.assertIn('exhaustion_transfer',self.a.runtime)
+        scene.refresh_from_db();self.post(self.gm,{'op':'scene.end','scene':scene.id,'version':scene.state})
+        self.a.refresh_from_db();self.assertNotIn('exhaustion_transfer',self.a.runtime)
+        self.post(self.gm,{'op':'undo'});self.a.refresh_from_db();self.assertEqual(self.a.runtime['exhaustion_transfer']['strength'],2)
+
+
+    def test_transfer_can_be_prepared_with_a_held_minor_action(self):
+        scene,p,prepare=self.transfer_setup()
+        self.post(self.alice,{'op':'action.spend','character':self.a.id,'action':'main','exchange':'minor'})
+        self.post(self.alice,{'op':'action.ready','character':self.a.id,'action':'minor','condition':'Союзник подаст знак'})
+        self.turn(scene,self.alice)
+        self.post(self.alice,{**prepare,'use_ready':True,'triggered':True,'dex_roll':12})
+        self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['exhaustion_transfer']['strength'],2)
+        self.assertNotIn('readied',self.a.runtime)
+        self.assertEqual(self.a.runtime['actions']['minor'],0)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertNotIn('exhaustion_transfer',self.a.runtime)
+        self.assertIn('readied',self.a.runtime)
+
+
+    def test_single_attack_cannot_transfer_to_a_different_external_target(self):
+        scene,p,prepare=self.transfer_setup();self.post(self.alice,prepare)
+        self.post(self.alice,{**p,'mystic_arrows':['shift'],'exhaustion_target':0},400)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1)
+        self.assertEqual(self.a.runtime['exhaustion_transfer']['strength'],2)
+        self.post(self.alice,{**p,'targets':[],'mystic_arrows':['shift'],'exhaustion_target':0})
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertNotIn('exhaustion_transfer',self.a.runtime)
+        self.assertEqual(computed(self.b)['hit'],0)

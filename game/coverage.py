@@ -53,6 +53,7 @@ def inventory(text):
         if title=='Интуитивное владение':handlers.append('game.rules.computed: bow proficiency')
         if title=='Мистическая точность':handlers.append('game.views.serialize_char: standard attack hit')
         if title in ['Мистические стрелы','Двойной заряд']:handlers.append('game.mystic_arrows')
+        if title=='Передача истощения':handlers.append('game.prepared_attacks')
         if title=='Оглушение Х':handlers.extend(['game.statuses.skip_stunned_action','game.views.execute: scene.turn'])
         if title=='Молниеносные рефлексы':handlers.extend(['game.passives.reflex_reason','game.rules.computed: reactions'])
         if title=='Отложить действие':handlers.append('game.readied')
