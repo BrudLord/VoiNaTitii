@@ -18,6 +18,7 @@ def profile(c,calc,scene):
 
 def apply(user,p):
     from .views import owned
+    if 'target_outcomes' in p:raise ValueError('Для обезоруживания выберите один исход')
     c=owned(user,p['character']);calc={**computed(c),'massive_strikes':False};scene=current_scene(c)
     spec=profile(c,calc,scene)
     if not spec:raise ValueError('Обезоруживание требует оружия со свойством Захват')

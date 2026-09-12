@@ -786,7 +786,6 @@ def use_ability(user, p, embedded=False):
     if aura and not d.get('aura'):
         raise ValueError('Это не аура')
     if not aura:
-        if d.get('automatic_hit') and p.get('outcome')=='miss':raise ValueError('Это умение попадает автоматически: промах невозможен')
         reason = availability(c, a, scene,readied=(p.get('ready_id') or True) if p.get('use_ready') else False,as_reaction=bool(p.get('as_reaction')))
         if reason:
             raise ValueError(reason)
@@ -804,6 +803,8 @@ def use_ability(user, p, embedded=False):
         raise ValueError('Выберите цель')
     if d.get('target') == 'single' and len(ids) > 1:
         raise ValueError('Выберите одну цель')
+    from . import outcomes
+    p=outcomes.normalize(p,ids,d,allowed=not aura and not pool)
     attack_targets=targeting.resolve(c,a,computed(c),[pool_targets[pk] for pk in ids],p) if not aura else []
     seeking_arrows.validate(c,a,p,ids)
     arrows=mystic_arrows.resolve(c,a,computed(c),p) if not aura else []
@@ -818,6 +819,7 @@ def use_ability(user, p, embedded=False):
         drawn.label=change.label
         drawn.inputs.update(change.inputs)
         change=drawn
+    if 'target_outcomes' in p:change.inputs['target_outcomes']=p['target_outcomes']
     if defense:change.inputs['damage_reduction']=defense
     change.effect_targets=pool_targets
     change.watch(c)
@@ -866,6 +868,7 @@ def use_ability(user, p, embedded=False):
             t.runtime['effects'] = [e for e in t.runtime.get('effects', []) if e.get('aura_source') != f'{c.id}:{a.id}']
     if p.get('outcome') != 'miss' or aura:
         for pk in ids:
+            if not aura and outcomes.for_target(p,pk)=='miss':continue
             t = change.watch(targets[pk])
             if not aura:
                 for charm in enchantments.for_ability(computed(c),a):

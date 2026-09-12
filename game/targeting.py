@@ -1,6 +1,6 @@
 """Attack totals before effects of the current attack are applied."""
 import re
-from . import enchantments
+from . import enchantments, outcomes
 
 
 def physical_weapon_units(ability,calc):
@@ -77,22 +77,21 @@ def resolve(character,ability,calc,targets,payload):
         extra=bp if ability.data.get('damage_from_bp') else 0
         strength=max((abs(e.get('value',0)) for e in effects if status_name(e)=='Сверхпроводник'),default=0) if target else conductor
         conductor_bonus=strength*physical_weapon_units(ability,calc)/2
-        damage=formula(character,ability,payload.get('outcome')=='critical',calc)
+        outcome=outcomes.for_target(payload,target.pk if target else 0)
+        damage=formula(character,ability,outcome=='critical',calc)
         bonus=0 if automatic else target_hit_bonus(effects,ability,calc) if target else external
-        result.append({'id':target.pk if target else None,'name':target.name if target else 'Цель на игровом поле',
+        result.append({'outcome':outcome,'id':target.pk if target else None,'name':target.name if target else 'Цель на игровом поле',
                        'automatic_hit':automatic,'hit':None if automatic else base+bonus,'roll_conditions':roll_conditions(ability,calc),'mark_penalty':penalty,'target_bonus':bonus,'bp_damage':extra,'conductor_damage':conductor_bonus,
                        'damage':damage+(f' +{extra} [БП]' if extra else '')+(f' +{conductor_bonus:g} [Сверхпроводник]' if conductor_bonus else ''),
                        'armored_hit':base+bonus+calc['armored_hit'] if not automatic and ability.data.get('weapon') and calc['armored_hit'] else None})
-    outcome=payload.get('outcome','hit')
     divisor=ability.data.get('miss_damage_divisor',0)
     values=payload.get('miss_damage',{})
-    if outcome=='miss' and divisor:
-        keys={str(row['id'] or 0) for row in result}
+    if any(row['outcome']=='miss' for row in result) and divisor:
+        keys={str(row['id'] or 0) for row in result if row['outcome']=='miss'}
         if not isinstance(values,dict) or set(values)!=keys or any(type(v) not in [int,float] or not 0<=v<=100000 for v in values.values()):
             raise ValueError('Введите урон до деления для каждой цели: число от 0 до 100000')
     for row in result:
-        row['outcome']=outcome
-        if outcome=='miss':
+        if row['outcome']=='miss':
             row['damage_before_miss']=row['damage']
             row['damage']='('+row['damage']+') / '+str(divisor) if divisor else '0'
             if divisor:
@@ -107,6 +106,7 @@ def finalize(change):
         value=change.inputs.get(key,{})
         if not value.get('hit'):continue
         for row in change.inputs.get('attack_targets',[]):
+            if row.get('outcome')=='miss':continue
             if row['id'] not in value.get('target_ids',[]) and not (row['id'] is None and value.get('external_target')):continue
             for choice in value.get('choices',[]):
                 bonus=choice.get('damage_contribution')

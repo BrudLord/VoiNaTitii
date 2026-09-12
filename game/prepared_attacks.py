@@ -28,9 +28,12 @@ def validate(character,ability,payload,ids):
         if ids and (ability.data.get('system') or ability.data.get('target')=='single'):
             raise ValueError('Передача должна попасть в ту же цель, что и одиночная атака')
         return {**p,'target':None}
-    if chosen is None and len(ids)==1:chosen=ids[0]
+    from .outcomes import for_target
+    hit_ids=[pk for pk in ids if for_target(payload,pk)!='miss']
+    if chosen is None and len(hit_ids)==1:chosen=hit_ids[0]
     if chosen is not None and (type(chosen) is not int or chosen not in ids):
         raise ValueError('Выберите получателя истощения среди целей атаки')
+    if chosen in ids and chosen not in hit_ids:raise ValueError('Выберите получателя истощения, в которого попали')
     if len(ids)>1 and chosen is None:raise ValueError('Выберите одну цель для передачи истощения')
     return {**p,'target':chosen}
 

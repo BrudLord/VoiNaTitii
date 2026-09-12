@@ -2631,7 +2631,7 @@ class GameTests(TestCase):
 
     def test_disarm_rejects_missing_roll_wrong_item_and_missing_capture(self):
         held,p=self.disarm_setup()
-        for update in [{'roll_result':''},{'in_range':False},{'target':self.a.pk},{'item':0}]:self.post(self.alice,{**p,**update},400)
+        for update in [{'roll_result':''},{'in_range':False},{'target':self.a.pk},{'item':0},{'target_outcomes':{str(self.b.pk):'miss'}}]:self.post(self.alice,{**p,**update},400)
         held.refresh_from_db();self.assertTrue(held.equipped)
         self.a.items.update(equipped=False);self.post(self.alice,p,400)
 
@@ -3649,3 +3649,63 @@ class GameTests(TestCase):
         self.assertEqual(item.quantity,3);self.assertFalse(item.data['needs_reload']);self.assertTrue(dropped.archived)
         self.post(self.alice,{'op':'redo'});item.refresh_from_db();dropped.refresh_from_db()
         self.assertEqual(item.quantity,2);self.assertFalse(item.data['needs_reload']);self.assertTrue(dropped.data['needs_reload'])
+
+    def mixed_attack_setup(self):
+        attack=Entry.objects.create(kind='ability',name='Волна для проверки',data={'circle':1,'action':'main','damage':True,'formula':'2к6','target':'multiple','reliable':True,'miss_damage_divisor':2,'effects':[{'stat':'status','status':'Влага','name':'Влага','value':2,'turns':3}]})
+        self.a.abilities.add(attack);scene=self.start();self.a.refresh_from_db()
+        self.a.runtime['effects']=[{'key':'burn','stat':'status','status':'Поджог','name':'Поджог','value':3,'remaining':3,'duration':'turns'}];self.a.save()
+        payload={'op':'ability.use','character':self.a.pk,'ability':attack.pk,'targets':[self.a.pk,self.b.pk],
+                 'outcome':'hit','roll_result':'А: промах, урон 9; Б: крит','target_outcomes':{str(self.a.pk):'miss',str(self.b.pk):'critical'},'miss_damage':{str(self.a.pk):9}}
+        return attack,scene,payload
+
+    def test_mixed_target_outcomes_apply_only_hit_effects_and_critical_damage(self):
+        attack,scene,p=self.mixed_attack_setup();before=Event.objects.count()
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        rows={r['id']:r for r in Event.objects.latest('id').inputs['attack_targets']}
+        self.assertEqual(rows[self.a.pk]['outcome'],'miss');self.assertEqual(rows[self.a.pk]['miss_damage']['remaining'],4.5)
+        self.assertEqual(rows[self.b.pk]['outcome'],'critical');self.assertEqual(rows[self.b.pk]['damage'],'4к6')
+        self.assertEqual(self.a.runtime['effects'][0]['status'],'Поджог');self.assertEqual(len(self.a.runtime['effects']),1)
+        self.assertEqual(self.b.runtime['effects'][0]['status'],'Влага')
+        self.assertEqual(self.a.runtime['used'][str(attack.pk)],1);self.assertEqual(self.a.runtime['actions']['main'],0)
+        self.assertEqual(Event.objects.count(),before+1)
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['actions']['main'],1);self.assertFalse(self.b.runtime['effects'])
+        self.post(self.alice,{'op':'redo'});self.b.refresh_from_db();self.assertEqual(self.b.runtime['effects'][0]['status'],'Влага')
+
+    def test_all_missed_targets_keep_reliable_usage_but_spend_one_action(self):
+        attack,scene,p=self.mixed_attack_setup()
+        p.update(target_outcomes={str(self.a.pk):'miss',str(self.b.pk):'miss'},miss_damage={str(self.a.pk):7,str(self.b.pk):10})
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertEqual(self.a.runtime['used'].get(str(attack.pk),0),0)
+        self.assertEqual(self.a.runtime['actions']['main'],0);self.assertFalse(self.b.runtime['effects'])
+        self.assertEqual(Event.objects.latest('id').inputs['outcome'],'miss')
+
+    def test_mixed_outcomes_reject_incomplete_unknown_and_automatic_miss(self):
+        attack,scene,p=self.mixed_attack_setup();before=Event.objects.count()
+        for bad in [{str(self.a.pk):'miss'}, {**p['target_outcomes'],'99999':'hit'}, {str(self.a.pk):'miss',str(self.b.pk):'wrong'}, [], None]:
+            self.post(self.alice,{**p,'target_outcomes':bad},400)
+        self.post(self.alice,{**p,'miss_damage':{}},400)
+        self.post(self.alice,{**p,'ability':self.bless.pk},400)
+        attack.data['automatic_hit']=True;attack.save();self.post(self.alice,p,400)
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['actions']['main'],1);self.assertEqual(Event.objects.count(),before)
+
+    def test_mixed_charged_arrows_skip_missed_recipient_but_consume_preparation(self):
+        scene,prep,shot=self.charged_setup();self.post(self.alice,prep)
+        p={**shot,'targets':[self.a.pk,self.b.pk],'outcome':'hit','target_outcomes':{str(self.a.pk):'hit',str(self.b.pk):'miss'},'charged_target':self.b.pk}
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertNotIn('charged_arrows',self.a.runtime)
+        self.assertFalse(Event.objects.latest('id').inputs['charged_arrows']['hit'])
+        self.assertFalse(any(e.get('status')=='Оглушение' for e in self.b.runtime['effects']))
+        self.post(self.alice,{'op':'undo'})
+        self.post(self.alice,{**p,'charged_target':self.a.pk});self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertTrue(any(e.get('status')=='Оглушение' for e in self.a.runtime['effects']))
+        rows={r['id']:r for r in Event.objects.latest('id').inputs['attack_targets']};self.assertEqual(rows[self.b.pk]['damage'],'0')
+
+    def test_exhaustion_transfer_chooses_only_a_successful_target(self):
+        attack,scene,p=self.mixed_attack_setup()
+        self.a.runtime['exhaustion_transfer']={'strength':2};self.a.save()
+        self.post(self.alice,{**p,'exhaustion_target':self.a.pk},400)
+        self.post(self.alice,p);self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertNotIn('exhaustion_transfer',self.a.runtime)
+        self.assertTrue(any(e.get('status')=='Истощение маны' for e in self.b.runtime['effects']))
+        self.assertFalse(any(e.get('status')=='Истощение маны' for e in self.a.runtime['effects']))

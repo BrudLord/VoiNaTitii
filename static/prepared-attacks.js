@@ -5,9 +5,10 @@ function transferPreparationForm(a){
 function transferTargetFields(a){return a.attack_setup&&!a.attack_setup.prepare?`<div id="transfer-target" class="notice"></div>`:''}
 function updateTransferTargets(){
  const box=el('transfer-target'),a=pendingAbility;if(!box||!a)return;
- const previous=formObject().exhaustion_target,targets=checks('targets').map(id=>byId(S.characters,id));
+ const previous=formObject().exhaustion_target,targets=checks('targets').filter(id=>targetOutcome(id)!=='miss').map(id=>byId(S.characters,id));
  const choices=a.data.system||a.data.target==='single'?targets:[...targets,{id:0,name:'Цель на игровом поле'}];
  const selected=choices.some(o=>String(o.id)===String(previous))?previous:targets.length===1?targets[0].id:null;
+ if(checks('targets').length&&!targets.length){box.innerHTML='Все цели: промах. Подготовка истощения сохранится.';return}
  box.innerHTML=`Истощение ${a.attack_setup.strength} при попадании. `+(targets.length?selector('exhaustion_target','Получатель истощения',choices,selected):'Получатель — цель на игровом поле.');
 }
 function transferPayload(){const value=formObject().exhaustion_target;return value?{exhaustion_target:Number(value)}:{}}

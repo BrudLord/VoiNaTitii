@@ -64,9 +64,13 @@ def apply(change, character, targets, choices, payload, *, count_use=True, log_k
         if old:effects.remove(old)
         put_effect(character,{'key':'status:Истощение маны','name':'Истощение маны','status':'Истощение маны',
                               'stat':'hit','value':value,'duration':'battle','source':character.name,'source_id':character.id})
-    hit=payload.get('outcome','hit')!='miss'
+    from .outcomes import for_target
+    missed=[t.pk for t in targets if for_target(payload,t.pk)=='miss']
+    external=not targets
+    targets=[t for t in targets if t.pk not in missed]
+    hit=bool(targets) or external and for_target(payload,0)!='miss'
     change.inputs[log_key]={'choices':choices,'hit':hit,'penalty_added':1 if uses and count_use else 0,
-                                    'use':uses+(1 if count_use else 0),'external_target':not targets,'target_ids':[t.pk for t in targets]}
+                                    'use':uses+(1 if count_use else 0),'external_target':external,'target_ids':[t.pk for t in targets]}
     change.label+=' · '+', '.join(o['name'] for o in choices)
     if not hit:return
     change.inputs.setdefault('damage_contributions',[]).extend(o['damage_contribution'] for o in choices if o.get('damage_contribution'))

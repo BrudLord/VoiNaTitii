@@ -18,3 +18,18 @@ test('half damage on miss divides the whole formula and journal keeps the entere
  assert.match(log,/промах/);assert.match(log,/17 ÷ 2 = 8,5/);
  a.data.miss_damage_divisor=0;assert.equal(context.targetDamageFormula(a,null),'0');context.formObject=()=>({});
 });
+
+test('per-target critical and miss override the common outcome independently',()=>{
+ context.formObject=()=>({outcome:'hit','target-outcome:1':'critical','target-outcome:2':'miss'});
+ const a={data:{miss_damage_divisor:2},formula:'2к6 + 3',critical:'4к6 + 3'},one={id:1,calc:{effects:[]}},two={id:2,calc:{effects:[]}};
+ assert.equal(context.targetDamageFormula(a,one),'4к6 + 3');assert.equal(context.targetDamageFormula(a,two),'(2к6 + 3) / 2');
+ context.formObject=()=>({outcome:'critical','target-outcome:1':'hit'});assert.equal(context.targetDamageFormula(a,one),'2к6 + 3');context.formObject=()=>({});
+});
+test('target outcome payload fills common defaults and sends only rendered selections',()=>{
+ context.dialogBody={querySelectorAll:()=>[{name:'target-outcome:1',value:'miss'},{name:'target-outcome:2',value:''}]};context.formObject=()=>({outcome:'critical'});
+ assert.equal(JSON.stringify(context.targetOutcomesPayload()),JSON.stringify({target_outcomes:{'1':'miss','2':'critical'}}));
+ context.dialogBody.querySelectorAll=()=>[];assert.equal(JSON.stringify(context.targetOutcomesPayload()),'{}');context.formObject=()=>({});
+});
+test('journal distinguishes a critical hit from an ordinary one',()=>{
+ context.esc=String;const log=context.attackTargetLog([{name:'Танк',outcome:'critical',hit:4,damage:'4к6'}]);assert.match(log,/Танк: крит/);assert.match(log,/4к6/);
+});
