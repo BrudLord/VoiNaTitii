@@ -450,6 +450,10 @@ def execute(user, p):
                 c.runtime['hp'] = computed(c)['max_hp']
         else:
             c = chars[current.id]
+            conditions=[e for e in c.runtime.get('effects',[]) if status_name(e) in ['Сон','Страх']]
+            if conditions:
+                change.inputs['skipped_conditions']=[{'name':status_name(e),'source':e.get('source',''),
+                    'speed':computed(c)['speed'] if status_name(e)=='Страх' else 0} for e in conditions]
             skipped=0
             for action_kind in ACTIONS:
                 while c.runtime.get('actions',{}).get(action_kind,0)>0 and skip_stunned_action(c):
@@ -629,6 +633,8 @@ def execute(user, p):
         change = Change(user, 'Действие · ' + c.name, scene)
         change.watch(c)
         key = p.get('action')
+        if any(status_name(e) in ['Сон','Страх'] for e in c.runtime.get('effects',[])):
+            raise ValueError('Персонаж пропускает ход: нажмите «Пропустить ход»')
         if key not in ['main', 'minor', 'move'] or c.runtime.get('actions', {}).get(key, 0) < 1:
             raise ValueError('Действие недоступно')
         if p.get('exchange')=='stand':

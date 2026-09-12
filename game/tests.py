@@ -2011,3 +2011,54 @@ class GameTests(TestCase):
             self.assertEqual(len(effects),1)
             self.assertEqual((effects[0]['name'],effects[0]['turns']),('Метка',1))
         self.assertEqual(literal_effects('Цель получает эффект Метка Порчи на 3 хода.')[0],[])
+
+    def test_book_sleep_and_fear_have_correct_explicit_and_default_durations(self):
+        for name,status,turns in [('Затуманенный разум','Сон',2),('Ужасающий удар','Страх',1)]:
+            desc,data,source=self.book_row(name)
+            effects=[e for e in data.get('effects',[]) if e.get('name')==status]
+            self.assertEqual(len(effects),1,name)
+            self.assertEqual(effects[0]['turns'],turns)
+        from .book_effects import literal_effects
+        self.assertEqual(literal_effects('Цель получает эффект Сон.')[0][0]['turns'],1)
+        self.assertEqual(literal_effects('Цель получает эффект Страх на 3 хода.')[0][0]['turns'],3)
+
+    def test_sleep_blocks_actions_and_expires_after_two_target_turns(self):
+        from .rules import availability
+        scene=self.start();self.a.refresh_from_db()
+        self.post(self.gm,{'op':'effect.apply','character':self.a.id,'name':'Сон','value':1,'turns':2})
+        self.a.refresh_from_db()
+        self.assertIn('пропускает ход',availability(self.a,self.bless,scene))
+        for action in ['main','minor','move']:
+            self.post(self.alice,{'op':'action.spend','character':self.a.id,'action':action},400)
+        self.post(self.alice,{'op':'action.spend','character':self.a.id,'action':'main','exchange':'minor'},400)
+        self.turn(scene,self.alice);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'][0]['remaining'],1)
+        self.assertEqual(Event.objects.latest('id').inputs['skipped_conditions'][0]['name'],'Сон')
+        self.turn(scene,self.bob);self.turn(scene,self.alice);self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'],[])
+        self.post(self.alice,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'][0]['remaining'],1)
+
+    def test_damage_to_temporary_hp_wakes_sleep_and_undo_restores_it(self):
+        self.start();self.a.refresh_from_db();self.a.runtime['temp']=5;self.a.save()
+        self.post(self.gm,{'op':'effect.apply','character':self.a.id,'name':'Сон','value':1,'turns':2})
+        self.a.refresh_from_db();hp=self.a.runtime['hp']
+        self.post(self.gm,{'op':'hp','character':self.a.id,'mode':'damage','value':0})
+        self.a.refresh_from_db();self.assertEqual(len(self.a.runtime['effects']),1)
+        self.post(self.gm,{'op':'hp','character':self.a.id,'mode':'damage','value':2})
+        self.a.refresh_from_db()
+        self.assertEqual(self.a.runtime['effects'],[])
+        self.assertEqual((self.a.runtime['hp'],self.a.runtime['temp']),(hp,3))
+        self.post(self.gm,{'op':'undo'});self.a.refresh_from_db()
+        self.assertEqual(len(self.a.runtime['effects']),1)
+        self.assertEqual(self.a.runtime['temp'],5)
+
+    def test_fear_skip_records_source_and_current_speed_without_moving_hp(self):
+        scene=self.start()
+        self.post(self.gm,{'op':'effect.apply','character':self.a.id,'name':'Страх','value':1,'turns':1,'source_id':self.b.id})
+        self.a.refresh_from_db();hp=self.a.runtime['hp']
+        self.turn(scene,self.alice)
+        row=Event.objects.latest('id').inputs['skipped_conditions'][0]
+        self.assertEqual(row,{'name':'Страх','source':self.b.name,'speed':6})
+        self.a.refresh_from_db();self.assertEqual(self.a.runtime['hp'],hp)
+        self.assertEqual(self.a.runtime['effects'],[])
